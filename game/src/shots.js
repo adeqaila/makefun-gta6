@@ -1,199 +1,159 @@
-// SOLMAR BAY — screenshot staging: four fixed, deterministic scenes.
-// One job: place every actor for a shot, then run the world a fixed number of steps.
+// Solmar Bay — deterministic staging for the four screenshots.
+// Each shot arranges the live game into one readable frame, freezes the
+// simulation, and reports the staged state for the capture harness.
+// Same seed, same staging, same pixels — every time.
 
-import THREE from './three.js';
-import { MISSIONS } from './config.js';
-import { makeDrivableCar, speedMph } from './vehicles.js';
-import { spawnEnemy } from './combat.js';
-import { startMission } from './missions.js';
+import { stealCar, speedMph } from './vehicles.js';
 
-const FIXED_DT = 1 / 60;
-
-function resetWorld(world, money = 250, ammo = 24) {
-  const { player, police, combat, scene } = world;
-  player.health = 100;
-  player.money = money;
-  player.ammo = ammo;
-  player.punchCooldown = 0;
-  police.wanted = 0;
-  police.bustTimer = 0;
-  police.quietTimer = 0;
-  for (const car of [...police.cars]) scene.remove(car.mesh);
-  police.cars = [];
-  for (const enemy of [...combat.enemies]) {
-    scene.remove(enemy.mesh);
-  }
-  combat.enemies = [];
-  if (world.parkedCar) {
-    scene.remove(world.parkedCar.mesh);
-    world.parkedCar = null;
-  }
-  if (player.inCar) {
-    scene.remove(player.inCar.mesh);
-    player.inCar = null;
-    player.mesh.visible = true;
-  }
-  world.gameMinutes = 16 * 60 + 20;
-  world.time = 0;
-}
-
-function putPlayerInCar(world, color, kind, x, z, heading) {
-  const car = makeDrivableCar(world.scene, color, kind, x, z, heading);
-  car.speed = 0;
-  world.player.inCar = car;
-  world.player.mesh.visible = false;
-  world.player.x = x;
-  world.player.z = z;
-  world.player.heading = heading;
+function placeTrafficCar(world, index, x, z, heading, speed) {
+  const car = world.traffic.cars[index];
+  if (!car) return null;
+  car.x = x;
+  car.z = z;
+  car.heading = heading;
+  car.speed = speed;
+  car.cruise = speed;
+  car.parked = false;
+  car.placed = true;
+  car.mesh.position.set(x, 0, z);
+  car.mesh.rotation.y = heading;
   return car;
 }
 
-function putPoliceBehind(world, x, z, heading, n) {
-  for (let i = 0; i < n; i++) {
-    const car = makeDrivableCar(world.scene, 0x1d2f4a, 'police', x - i * 16, z + (i % 2 === 0 ? 3 : -3), heading);
-    car.speed = 26 + i * 2;
-    world.police.cars.push(car);
-  }
-}
-
-// Move every traffic car the shot does not feature onto far avenues, so no
-// random car can drift into the player's path and spoil the staged scene.
-function clearTraffic(world) {
-  const avenues = [-240, -180, -120, 120, 180, 240];
-  world.traffic.cars.forEach((car, i) => {
-    car.x = avenues[i % avenues.length];
-    car.z = -220 + i * 34;
-    car.heading = i % 2 === 0 ? 0 : Math.PI;
+// Move every unplaced traffic car far out of the camera's corridor so a
+// random commuter never photobombs the shot.
+function sweepTraffic(world, zStart) {
+  let k = 0;
+  for (const car of world.traffic.cars) {
+    if (car.placed) continue;
+    car.x = k % 2 === 0 ? 62.6 : -62.6;
+    car.z = zStart + k * 8;
+    car.heading = 0;
     car.speed = 10;
     car.cruise = 10;
-    car.wait = 0;
-  });
+    car.parked = false;
+    car.mesh.position.set(car.x, 0, car.z);
+    car.mesh.rotation.y = 0;
+    k++;
+  }
 }
 
-// Stage shot n (1-4). Returns {steps, input} for the fixed-step run.
-export function stageShot(world, n) {
-  const { player, rng } = world;
-  world.state = 'playing';
-  world.hud.el.style.display = 'block';
-  if (n === 1) {
-    // COVER — chase: red Solmar GT at speed, three police on its tail, wanted 3.
-    resetWorld(world, 1050, 24);
-    spawnEnemy(world.combat, world.scene, rng, 188, 126);
-    spawnEnemy(world.combat, world.scene, rng, 172, 116);
-    startMission(world, 2);
-    world.missions.rivalsSpawned = true; // rivals already placed at the club
-    const car = putPlayerInCar(world, 0xc23b2e, 'sport', -120, 0, Math.PI / 2);
-    car.speed = 26;
-    world.police.wanted = 3;
-    putPoliceBehind(world, -152, 0, Math.PI / 2, 3);
-    clearTraffic(world);
-    // traffic ahead in the same avenue, in the outer lanes (never in the
-    // player's path, so the chase is never spoiled by a rear-end graze)
-    world.traffic.cars[0].x = -60; world.traffic.cars[0].z = 4.5; world.traffic.cars[0].heading = Math.PI / 2; world.traffic.cars[0].speed = 12;
-    world.traffic.cars[1].x = -30; world.traffic.cars[1].z = -4.5; world.traffic.cars[1].heading = Math.PI / 2; world.traffic.cars[1].speed = 10;
-    world.traffic.cars[2].x = -95; world.traffic.cars[2].z = -4.5; world.traffic.cars[2].heading = -Math.PI / 2; world.traffic.cars[2].speed = 11;
-    world.cameraYaw = Math.PI / 2;
-    return { steps: 360, input: { KeyW: true } };
-  }
-  if (n === 2) {
-    // STREET — blue sedan cruising the central avenue, traffic and peds close by.
-    resetWorld(world, 250, 24);
-    startMission(world, 0);
-    const car = putPlayerInCar(world, 0x2e6fc2, 'sedan', 0, -120, 0);
-    car.speed = 14;
-    world.police.wanted = 0;
-    clearTraffic(world);
-    world.traffic.cars[0].x = 4.5; world.traffic.cars[0].z = -58; world.traffic.cars[0].heading = 0; world.traffic.cars[0].speed = 11;
-    world.traffic.cars[1].x = 4.5; world.traffic.cars[1].z = -45; world.traffic.cars[1].heading = 0; world.traffic.cars[1].speed = 12;
-    world.traffic.cars[2].x = -4.5; world.traffic.cars[2].z = 30; world.traffic.cars[2].heading = Math.PI; world.traffic.cars[2].speed = 10;
-    world.traffic.cars[3].x = 4.5; world.traffic.cars[3].z = -41; world.traffic.cars[3].heading = 0; world.traffic.cars[3].speed = 12;
-    // peds on the sidewalks just ahead of where the car ends up
-    const near = world.peds.peds.slice(0, 5);
-    const spots = [[8.5, -32], [-8.5, -24], [8.5, -16], [-8.5, -38], [8.5, -42]];
-    near.forEach((ped, i) => {
-      ped.x = spots[i][0];
-      ped.z = spots[i][1];
-      ped.targetX = ped.x;
-      ped.targetZ = ped.z + 40;
-      ped.speed = 1.5;
-    });
-    world.cameraYaw = 0;
-    return { steps: 180, input: { KeyW: true } };
-  }
-  if (n === 3) {
-    // ON FOOT — Rico walks east down the avenue toward a rival, Club Neon Palms beacon ahead.
-    resetWorld(world, 650, 24);
-    startMission(world, 1);
-    player.x = 140;
-    player.z = 120;
-    player.heading = Math.PI / 2;
-    player.mesh.position.set(140, 0, 120);
-    player.mesh.rotation.y = Math.PI / 2;
-    world.police.wanted = 1;
-    clearTraffic(world);
-    spawnEnemy(world.combat, world.scene, rng, 158, 114);
-    world.cameraYaw = Math.PI / 2;
-    return { steps: 90, input: { KeyW: true } };
-  }
-  // START — aerial vista of the city, tower and ocean, title screen on top.
-  resetWorld(world, 250, 24);
-  world.state = 'title';
-  world.hud.el.style.display = 'none';
-  player.x = -60;
-  player.z = 120;
-  player.mesh.position.set(-60, 0, 120);
-  startMission(world, 0);
-  return { steps: 0, input: {} };
-}
-
-// Position the camera for shot n after the fixed-step run.
-export function shotCamera(world, n) {
-  const { camera, player } = world;
-  if (n === 1) {
-    // chase, seen from ahead: the Solmar GT head-on, police closing in behind it
-    const car = player.inCar;
-    const f = new THREE.Vector3(Math.sin(car.heading), 0, Math.cos(car.heading));
-    const r = new THREE.Vector3(f.z, 0, -f.x);
-    camera.position.copy(new THREE.Vector3(car.x, 0, car.z)).addScaledVector(f, 17).addScaledVector(r, 5).add(new THREE.Vector3(0, 5.5, 0));
-    camera.lookAt(car.x - f.x * 12, 1.4, car.z - f.z * 12);
-    return;
-  }
-  if (n === 2) {
-    const car = player.inCar;
-    const f = new THREE.Vector3(Math.sin(car.heading), 0, Math.cos(car.heading));
-    const r = new THREE.Vector3(f.z, 0, -f.x);
-    // higher and further to the right, so the near building wall on the
-    // left drops out of the frame and the avenue reads cleanly
-    camera.position.copy(new THREE.Vector3(car.x, 0, car.z)).addScaledVector(f, -13).addScaledVector(r, 4.5).add(new THREE.Vector3(0, 7, 0));
-    camera.lookAt(car.x + f.x * 10, 1.2, car.z + f.z * 10);
-    return;
-  }
-  if (n === 3) {
-    const f = new THREE.Vector3(Math.sin(player.heading), 0, Math.cos(player.heading));
-    const r = new THREE.Vector3(f.z, 0, -f.x);
-    camera.position.copy(new THREE.Vector3(player.x, 0, player.z)).addScaledVector(f, -7).addScaledVector(r, 3).add(new THREE.Vector3(0, 3, 0));
-    camera.lookAt(player.x + f.x * 12, 1.4, player.z + f.z * 12);
-    return;
-  }
-  // aerial vista: high over the south-west, looking at the tower and the ocean
-  camera.position.set(-150, 155, -150);
-  camera.lookAt(80, 0, 80);
-}
-
-export function shotState(world, n) {
-  const { player } = world;
+function summary(world, shot) {
   return {
-    shot: n,
-    playerX: Math.round((player.inCar ? player.inCar.x : player.x) * 100) / 100,
-    playerZ: Math.round((player.inCar ? player.inCar.z : player.z) * 100) / 100,
-    speedMph: player.inCar ? Math.round(speedMph(player.inCar) * 10) / 10 : 0,
+    shot,
     wanted: world.police.wanted,
-    money: player.money,
-    ammo: player.ammo,
-    policeCars: world.police.cars.length,
+    money: Math.floor(world.player.money),
     mission: world.missions.current,
-    gameMinutes: Math.round(world.gameMinutes * 100) / 100,
+    speedMph: Math.round(speedMph(world.player)),
+    police: world.police.cars.length,
+    traffic: world.traffic.cars.length,
+    peds: world.peds.walkers.length,
+    health: Math.round(world.player.health),
+    ammo: world.player.ammo,
   };
 }
 
-export { FIXED_DT, MISSIONS };
+function finish(world, shot) {
+  world.hudApi.hideBanner();
+  world.syncHud();
+  world.snapCamera = true;
+  world.shotFrozen = true;
+  window.__shotState = JSON.stringify(summary(world, shot));
+  window.__shotReady = true;
+}
+
+export function stageShot(world, shot) {
+  const { player } = world;
+  if (shot === 1) {
+    // Cover: the red Solmar GT at 85 mph down the central avenue, three
+    // cruisers on its tail, wanted level 3, M3 on the HUD.
+    world.resetRun();
+    world.beginPlay();
+    const car = placeTrafficCar(world, 0, 0, 30, Math.PI, 38);
+    car.mesh.children[0].material.color.set(0xc01818);
+    stealCar(world, car);
+    car.speed = 38;
+    world.policeApi.setWanted(3, world.time);
+    world.policeApi.update(0.016, world);
+    world.police.cars.forEach((cop, i) => {
+      cop.x = (i - 1) * 4.5;
+      cop.z = 44 + i * 9;
+      cop.heading = Math.PI;
+      cop.speed = 34;
+      cop.mesh.position.set(cop.x, 0, cop.z);
+      cop.mesh.rotation.y = Math.PI;
+    });
+    placeTrafficCar(world, 0, 2.6, 72, Math.PI, 12);
+    placeTrafficCar(world, 1, -2.6, 88, 0, 10);
+    sweepTraffic(world, -100);
+    player.money = 1250;
+    world.missions.current = 2;
+    world.setMissionBeacon(2);
+    // Camera in front of the GT, looking back at it: the three cruisers
+    // on its tail stay in frame behind the car.
+    world.camYaw = Math.PI;
+    world.camPitch = 0.35;
+    finish(world, 1);
+    return;
+  }
+  if (shot === 2) {
+    // Street: a blue sedan cruising the avenue, traffic and pedestrians
+    // around it, M1 on the HUD.
+    world.resetRun();
+    world.beginPlay();
+    const car = placeTrafficCar(world, 0, 0, -20, Math.PI, 13);
+    car.mesh.children[0].material.color.set(0x2456c8);
+    stealCar(world, car);
+    car.speed = 13;
+    placeTrafficCar(world, 0, 2.6, -48, Math.PI, 12);
+    placeTrafficCar(world, 1, -2.6, 6, 0, 10);
+    placeTrafficCar(world, 2, -2.6, -70, Math.PI, 12);
+    const w0 = world.peds.walkers[0];
+    w0.x = 7.6; w0.z = -8;
+    const w1 = world.peds.walkers[1];
+    w1.x = -7.6; w1.z = -34;
+    const w2 = world.peds.walkers[2];
+    w2.x = 7.6; w2.z = -52;
+    sweepTraffic(world, 40);
+    world.setMissionBeacon(0);
+    world.camYaw = 0;
+    world.camPitch = 0.35;
+    finish(world, 2);
+    return;
+  }
+  if (shot === 3) {
+    // On foot: Rico walking toward an armed rival, the Club Neon Palms
+    // beacon glowing ahead, wanted level 1.
+    world.resetRun();
+    world.beginPlay();
+    player.x = 50;
+    player.z = 50;
+    player.heading = Math.PI / 4;
+    player.mesh.position.set(50, 0, 50);
+    player.mesh.rotation.y = Math.PI / 4;
+    player.money = 650;
+    world.combatApi.spawnRivals([{ x: 64, z: 57 }]);
+    sweepTraffic(world, -100);
+    world.missions.current = 2;
+    world.setMissionBeacon(2);
+    world.policeApi.setWanted(1, world.time);
+    world.policeApi.update(0.016, world);
+    if (world.police.cars[0]) {
+      const cop = world.police.cars[0];
+      cop.x = -30;
+      cop.z = 60;
+      cop.heading = 0;
+      cop.speed = 0;
+      cop.mesh.position.set(-30, 0, 60);
+      cop.mesh.rotation.y = 0;
+    }
+    world.camYaw = -Math.PI * 3 / 4;
+    world.camPitch = 0.3;
+    finish(world, 3);
+    return;
+  }
+  // Shot 4: the title screen over an aerial vista of the whole city.
+  world.toTitle();
+  world.camYaw = 0;
+  finish(world, 4);
+}

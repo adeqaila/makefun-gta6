@@ -3,94 +3,111 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SOLMAR BAY — an open-world story in the sun</title>
+<title>SOLMAR BAY — Open World</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a2230; font-family: 'Segoe UI', Arial, sans-serif; }
-  #game-canvas { position: fixed; inset: 0; }
-  #game-canvas canvas { display: block; }
-  .panel { background: rgba(12, 18, 26, 0.72); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 8px; color: #fff; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a2027;
+    font-family: 'Segoe UI', Verdana, sans-serif; color: #fff; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
   #hud { position: fixed; inset: 0; pointer-events: none; display: none; z-index: 5; }
-  #hud-topleft { position: absolute; top: 14px; left: 14px; padding: 10px 14px; min-width: 210px; }
-  #hud-money { font-size: 26px; font-weight: 800; color: #7be495; letter-spacing: 0.5px; }
-  #hud-health { margin-top: 6px; height: 10px; background: rgba(255,255,255,0.22); border-radius: 5px; overflow: hidden; }
-  #hud-health-fill { height: 100%; width: 100%; background: #58c96b; border-radius: 5px; }
-  #hud-ammo { margin-top: 6px; font-size: 14px; color: #ffd9a0; font-weight: 600; }
-  #hud-topcenter { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); text-align: center; padding: 8px 18px; }
-  #hud-stars { font-size: 24px; letter-spacing: 3px; }
-  #hud-clock { font-size: 15px; color: #cfe3ff; margin-top: 2px; font-weight: 600; }
-  #hud-topright { position: absolute; top: 14px; right: 14px; padding: 6px; }
-  #minimap { display: block; width: 180px; height: 180px; border-radius: 6px; }
-  #hud-objective { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); padding: 10px 20px; font-size: 16px; font-weight: 600; white-space: nowrap; max-width: 90vw; overflow: hidden; text-overflow: ellipsis; }
-  #hud-banner { position: absolute; top: 26%; left: 50%; transform: translateX(-50%); font-size: 40px; font-weight: 900; color: #ffc93a; text-shadow: 0 2px 0 rgba(0,0,0,0.6), 0 0 24px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.4s; text-align: center; white-space: nowrap; }
-  #hud-message { position: absolute; top: 34%; left: 50%; transform: translateX(-50%); font-size: 17px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8); opacity: 0; transition: opacity 0.4s; text-align: center; max-width: 640px; }
-  #hud-toast { position: absolute; bottom: 84px; left: 50%; transform: translateX(-50%); padding: 7px 16px; font-size: 14px; color: #ffe9a8; opacity: 0; transition: opacity 0.4s; white-space: nowrap; }
-  #hud-speed { position: absolute; bottom: 18px; right: 18px; padding: 10px 16px; font-size: 26px; font-weight: 800; color: #fff; display: none; }
-  .overlay { position: fixed; inset: 0; z-index: 10; display: none; align-items: center; justify-content: center; background: linear-gradient(180deg, rgba(10,16,26,0.55), rgba(10,16,26,0.82)); color: #fff; }
-  .overlay-inner { text-align: center; max-width: 640px; padding: 32px; }
-  .game-title { font-size: 76px; font-weight: 900; letter-spacing: 6px; color: #ffc93a; text-shadow: 0 4px 0 #b3541e, 0 8px 28px rgba(0,0,0,0.7); line-height: 1; }
-  .game-subtitle { font-size: 20px; color: #ffd9a0; margin-top: 8px; letter-spacing: 2px; }
-  .game-story { font-size: 16px; line-height: 1.55; color: #e8eef5; margin: 22px 0 8px; }
-  .game-controls { font-size: 13px; color: #b9c6d4; margin: 14px 0 26px; line-height: 1.7; }
-  .btn { pointer-events: auto; cursor: pointer; display: inline-block; margin: 6px; padding: 13px 30px; font-size: 17px; font-weight: 700; color: #1a2230; background: #ffc93a; border: none; border-radius: 8px; }
-  .btn:hover { background: #ffd964; }
-  .btn.secondary { background: rgba(255,255,255,0.16); color: #fff; border: 1px solid rgba(255,255,255,0.4); }
-  .btn:disabled { opacity: 0.45; cursor: default; }
-  #start-screen { display: flex; }
-  .big-word { font-size: 64px; font-weight: 900; letter-spacing: 8px; color: #ff5f4d; text-shadow: 0 4px 0 rgba(0,0,0,0.5); }
-  .over-stats { font-size: 16px; color: #cfe3ff; margin-top: 14px; }
+  .panel { background: rgba(10, 14, 20, 0.62); border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 8px; padding: 8px 12px; }
+  #hud-topleft { position: absolute; top: 14px; left: 14px; display: flex; flex-direction: column; gap: 6px; }
+  #hud-money { font-size: 30px; font-weight: 800; color: #7dff9a; text-shadow: 0 2px 4px #000; }
+  #hud-health-row { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; }
+  #hud-health-track { width: 150px; height: 12px; background: rgba(0,0,0,0.55); border-radius: 6px; overflow: hidden; }
+  #hud-health-bar { height: 100%; width: 100%; background: #58d68d; }
+  #hud-ammo-row { font-size: 16px; font-weight: 700; }
+  #hud-topright { position: absolute; top: 14px; right: 14px; text-align: right; }
+  #hud-stars { font-size: 26px; letter-spacing: 3px; text-shadow: 0 2px 4px #000; }
+  #hud-clock { font-size: 20px; font-weight: 700; text-shadow: 0 2px 4px #000; }
+  #hud-objective { position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    font-size: 16px; font-weight: 700; text-align: center; max-width: 560px; }
+  #hud-speed { position: absolute; right: 18px; bottom: 205px; font-size: 26px; font-weight: 800;
+    text-shadow: 0 2px 4px #000; }
+  #minimap { position: absolute; right: 14px; bottom: 14px; width: 180px; height: 180px;
+    border: 2px solid rgba(255,255,255,0.5); border-radius: 50%; background: #20242a; }
+  #hud-banner { position: absolute; top: 96px; left: 50%; transform: translateX(-50%);
+    font-size: 26px; font-weight: 800; text-align: center; color: #ffd24d;
+    text-shadow: 0 2px 8px #000; display: none; max-width: 760px; }
+  #hud-toast { position: absolute; bottom: 210px; left: 50%; transform: translateX(-50%);
+    font-size: 17px; font-weight: 600; display: none; }
+  #crosshair { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px;
+    transform: translate(-50%, -50%); display: none; }
+  #crosshair::before, #crosshair::after { content: ''; position: absolute; background: #fff; }
+  #crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
+  #crosshair::after { left: 0; top: 6px; width: 14px; height: 2px; }
+  .screen { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    flex-direction: column; z-index: 10; text-align: center;
+    background: linear-gradient(180deg, rgba(8,12,20,0.25) 0%, rgba(8,12,20,0.78) 100%); }
+  .screen h1 { font-size: 74px; font-weight: 900; letter-spacing: 6px; color: #ffd24d;
+    text-shadow: 0 4px 0 #b3541e, 0 8px 24px #000; }
+  .screen h2 { font-size: 20px; font-weight: 600; color: #ffe9b0; margin-top: 4px; letter-spacing: 2px; }
+  .screen p { max-width: 620px; margin: 18px 20px 6px; font-size: 17px; line-height: 1.5;
+    text-shadow: 0 2px 4px #000; }
+  .controls { margin-top: 14px; font-size: 14px; line-height: 1.9; color: #dfe8f2;
+    background: rgba(0,0,0,0.45); border-radius: 8px; padding: 10px 18px; }
+  .controls b { color: #ffd24d; }
+  button { pointer-events: auto; margin-top: 16px; padding: 12px 34px; font-size: 19px; font-weight: 800;
+    color: #1a2027; background: #ffd24d; border: none; border-radius: 8px; cursor: pointer; }
+  button:hover { background: #ffe27a; }
+  button.ghost { background: rgba(255,255,255,0.16); color: #fff; border: 1px solid #fff; }
+  #gameover-title { font-size: 74px; font-weight: 900; letter-spacing: 6px; color: #ff5a4d;
+    text-shadow: 0 4px 0 #7a130c, 0 8px 24px #000; }
 </style>
 </head>
 <body>
-<div id="game-canvas"></div>
+<canvas id="game"></canvas>
 
 <div id="hud">
-  <div id="hud-topleft" class="panel">
-    <div id="hud-money">$250</div>
-    <div id="hud-health"><div id="hud-health-fill"></div></div>
-    <div id="hud-ammo">Ammo 24</div>
+  <div id="hud-topleft">
+    <div id="hud-money" class="panel">$250</div>
+    <div id="hud-health-row" class="panel">HP <span id="hud-health">100</span>
+      <span id="hud-health-track"><span id="hud-health-bar"></span></span>
+    </div>
+    <div id="hud-ammo-row" class="panel">AMMO <span id="hud-ammo">24</span></div>
   </div>
-  <div id="hud-topcenter" class="panel">
+  <div id="hud-topright">
     <div id="hud-stars">☆☆☆☆☆</div>
-    <div id="hud-clock">16:20</div>
+    <div id="hud-clock">17:24</div>
   </div>
-  <div id="hud-topright" class="panel"><canvas id="minimap" width="180" height="180"></canvas></div>
+  <div id="hud-objective" class="panel">M1/3 — Pick up Marisol's package — Harbor Steps ($400)</div>
+  <div id="hud-speed"></div>
+  <canvas id="minimap" width="180" height="180"></canvas>
   <div id="hud-banner"></div>
-  <div id="hud-message"></div>
   <div id="hud-toast" class="panel"></div>
-  <div id="hud-objective" class="panel">Pick up the package at Rico&rsquo;s Garage</div>
-  <div id="hud-speed" class="panel">0 mph</div>
+  <div id="crosshair"></div>
 </div>
 
-<div id="start-screen" class="overlay">
-  <div class="overlay-inner">
-    <div class="game-title">SOLMAR BAY</div>
-    <div class="game-subtitle">AN OPEN-WORLD STORY IN THE SUN</div>
-    <p class="game-story" id="start-story"></p>
-    <p class="game-controls" id="start-controls"></p>
-    <button class="btn" id="btn-new">New Game</button>
-    <button class="btn secondary" id="btn-continue">Continue</button>
+<div id="start-screen" class="screen">
+  <h1>SOLMAR BAY</h1>
+  <h2>AN OPEN-WORLD CRIME STORY</h2>
+  <p>Rico Vale owes Marisol Kane $2,000. Three jobs stand between him and a clean
+  slate. Steal a car, lose the cops, and get the work done — the bay never sleeps.</p>
+  <div class="controls">
+    <b>WASD</b> move &nbsp;·&nbsp; <b>Mouse drag</b> look &nbsp;·&nbsp; <b>Shift</b> run<br>
+    <b>E</b> steal / exit car &nbsp;·&nbsp; <b>Click</b> shoot &nbsp;·&nbsp; <b>F</b> punch<br>
+    <b>Esc</b> pause &nbsp;·&nbsp; <b>M</b> mute &nbsp;·&nbsp; progress saves automatically
   </div>
+  <button id="btn-new">NEW GAME</button>
+  <button id="btn-continue" class="ghost" style="display:none">CONTINUE</button>
 </div>
 
-<div id="pause-screen" class="overlay">
-  <div class="overlay-inner">
-    <div class="game-title" style="font-size:52px">PAUSED</div>
-    <p class="game-story">Solmar Bay waits for no one — except right now.</p>
-    <button class="btn" id="btn-resume">Resume</button>
-    <button class="btn secondary" id="btn-quit-title">Quit to Title</button>
-  </div>
+<div id="pause-screen" class="screen">
+  <h1>PAUSED</h1>
+  <p>Solmar Bay waits for no one — except right now.</p>
+  <button id="btn-resume">RESUME</button>
+  <button id="btn-restart" class="ghost">RESTART</button>
 </div>
 
-<div id="over-screen" class="overlay">
-  <div class="overlay-inner">
-    <div class="big-word" id="over-title">WASTED</div>
-    <p class="game-story" id="over-text"></p>
-    <p class="over-stats" id="over-stats"></p>
-    <button class="btn" id="btn-restart">Try Again</button>
-  </div>
+<div id="gameover-screen" class="screen">
+  <div id="gameover-title">WASTED</div>
+  <p id="gameover-text">Rico went down in the streets of Solmar Bay.</p>
+  <button id="btn-again">TRY AGAIN</button>
+  <button id="btn-title" class="ghost">TITLE SCREEN</button>
 </div>
 
-<script type="module" src="./src/main.js"></script>
+<script src="vendor/three.min.js"></script>
+<script type="module" src="src/main.js"></script>
 </body>
 </html>

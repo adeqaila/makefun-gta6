@@ -1,7 +1,6 @@
-// SOLMAR BAY — three.js access: the vendored UMD build sets globalThis.THREE.
-// One job: give every module the same THREE namespace object.
+// Solmar Bay — three.js shim.
+// The vendored UMD build sets globalThis.THREE; this module re-exports it so
+// every other module imports THREE the same way.
 
-import '../vendor/three.min.js';
-
-const THREE = globalThis.THREE;
+export const THREE = globalThis.THREE;
 export default THREE;

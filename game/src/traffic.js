@@ -1,95 +1,97 @@
-// SOLMAR BAY — traffic: NPC cars cruising the road grid.
-// One job: keep cars on roads, turning at intersections, at sane speeds.
+// Solmar Bay — NPC traffic: cars cruising the avenue grid.
+// Each car owns one road line and one lane; it follows, wraps, and slows
+// for the car ahead instead of piling up.
 
-import THREE from './three.js';
-import { CITY, PALETTE } from './config.js';
-import { range, pick } from './random.js';
-import { buildCarMesh } from './carMesh.js';
-import { ROAD_LINES, nearestRoadCoord } from './city.js';
+import { makeCar } from './carMesh.js';
+import { CFG, PALETTE } from './config.js';
+import { pick, pickSign, range } from './random.js';
 
-const LANES = [-3, 3]; // right-hand lanes, offset from the road centre line
-
-export function createTraffic(scene, rng, count = 14) {
+export function createTraffic(scene, rng) {
   const cars = [];
-  for (let i = 0; i < count; i++) {
-    const mesh = buildCarMesh(pick(rng, PALETTE.car), rng() < 0.25 ? 'sport' : 'sedan');
-    const horizontal = rng() < 0.5;
-    const line = pick(rng, ROAD_LINES);
-    const along = range(rng, -270, 270);
-    const lane = pick(rng, LANES);
-    const dir = rng() < 0.5 ? 1 : -1;
+  for (let i = 0; i < CFG.trafficCount; i++) {
+    const axis = pick(rng, ['x', 'z']);
+    const line = pick(rng, CFG.roadLines);
+    const dir = pickSign(rng);
+    const lane = dir > 0 ? 2.6 : -2.6;
     const car = {
-      mesh: mesh.group,
-      wheels: mesh.wheels,
-      x: horizontal ? along : line + lane,
-      z: horizontal ? line + lane : along,
-      heading: horizontal ? (dir > 0 ? 0 : Math.PI) : (dir > 0 ? Math.PI / 2 : -Math.PI / 2),
-      speed: range(rng, 7, 12),
-      cruise: range(rng, 7, 12),
-      horizontal,
+      mesh: makeCar(pick(rng, PALETTE.carColors)),
+      axis,
       line,
-      wait: 0,
-      bumpCd: 0,
+      lane,
+      dir,
+      speed: range(rng, 9, 15),
+      cruise: 0,
+      x: 0,
+      z: 0,
+      heading: 0,
+      parked: false,
     };
-    mesh.group.position.set(car.x, 0, car.z);
-    mesh.group.rotation.y = car.heading;
-    scene.add(mesh.group);
-    cars.push(car);
-  }
-  return { cars };
-}
-
-export function updateTraffic(traffic, dt, rng) {
-  for (const car of traffic.cars) {
-    // pause briefly at intersections sometimes, like a real driver
-    const nearCross = Math.abs(car.x - nearestRoadCoord(car.x)) < 4 && Math.abs(car.z - nearestRoadCoord(car.z)) < 4;
-    if (car.wait > 0) {
-      car.wait -= dt;
-    } else if (nearCross && rng() < 0.004) {
-      car.wait = range(rng, 1, 2.5);
-    }
-    const speed = car.wait > 0 ? 0 : car.cruise;
-    car.speed += (speed - car.speed) * Math.min(1, dt * 2);
-    const dx = Math.sin(car.heading) * car.speed * dt;
-    const dz = Math.cos(car.heading) * car.speed * dt;
-    car.x += dx;
-    car.z += dz;
-    // reached the city edge: turn around at the next intersection
-    if (Math.abs(car.x) > 285 || Math.abs(car.z) > 285) {
-      car.heading += Math.PI;
-      car.x = THREE.MathUtils.clamp(car.x, -285, 285);
-      car.z = THREE.MathUtils.clamp(car.z, -285, 285);
-    }
-    // at an intersection, sometimes turn onto the crossing road
-    if (nearCross && rng() < 0.02) {
-      const turn = rng() < 0.5 ? Math.PI / 2 : -Math.PI / 2;
-      car.heading += turn;
-      car.horizontal = Math.abs(Math.sin(car.heading)) > 0.5;
-      car.line = car.horizontal ? nearestRoadCoord(car.z) : nearestRoadCoord(car.x);
-      car.x = car.horizontal ? car.x : car.line + (car.heading > 0 ? 3 : -3);
-      car.z = car.horizontal ? car.line + (car.heading > 0 ? -3 : 3) : car.z;
+    car.cruise = car.speed;
+    const along = range(rng, -160, 160);
+    if (axis === 'x') {
+      car.x = along;
+      car.z = line + lane;
+      car.heading = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+    } else {
+      car.x = line + lane;
+      car.z = along;
+      car.heading = dir > 0 ? 0 : Math.PI;
     }
     car.mesh.position.set(car.x, 0, car.z);
     car.mesh.rotation.y = car.heading;
-    for (const w of car.wheels) w.rotation.x += (car.speed * dt) / 0.42;
+    scene.add(car.mesh);
+    cars.push(car);
   }
-}
 
-// The traffic car nearest to (x,z), for collisions and stealing.
-export function nearestTrafficCar(traffic, x, z, maxDist = 5) {
-  let best = null;
-  let bestD = maxDist;
-  for (const car of traffic.cars) {
-    const d = Math.hypot(car.x - x, car.z - z);
-    if (d < bestD) {
-      bestD = d;
-      best = car;
+  function carAhead(car) {
+    let best = null;
+    let bestGap = 9;
+    for (const other of cars) {
+      if (other === car || other.axis !== car.axis || other.line !== car.line || other.lane !== car.lane) continue;
+      const gap = (car.axis === 'x' ? (other.x - car.x) * car.dir : (other.z - car.z) * car.dir);
+      if (gap > 0 && gap < bestGap) {
+        bestGap = gap;
+        best = other;
+      }
+    }
+    return best;
+  }
+
+  function update(dt) {
+    for (const car of cars) {
+      if (car.parked || car.speed === 0) {
+        car.mesh.position.set(car.x, 0, car.z);
+        continue;
+      }
+      const ahead = carAhead(car);
+      const target = ahead ? Math.max(0, ahead.speed - 1) : car.cruise;
+      car.speed += Math.max(-8 * dt, Math.min(5 * dt, target - car.speed));
+      if (car.axis === 'x') {
+        car.x += car.dir * car.speed * dt;
+        if (car.x > 172) car.x = -172;
+        if (car.x < -172) car.x = 172;
+      } else {
+        car.z += car.dir * car.speed * dt;
+        if (car.z > 172) car.z = -172;
+        if (car.z < -172) car.z = 172;
+      }
+      car.mesh.position.set(car.x, 0, car.z);
+      car.mesh.rotation.y = car.heading;
     }
   }
-  return best;
-}
 
-export function removeTrafficCar(scene, traffic, car) {
-  scene.remove(car.mesh);
-  traffic.cars.splice(traffic.cars.indexOf(car), 1);
+  function removeCar(car) {
+    const i = cars.indexOf(car);
+    if (i >= 0) cars.splice(i, 1);
+    scene.remove(car.mesh);
+  }
+
+  function parkCar(car) {
+    car.parked = true;
+    car.speed = 0;
+    if (!cars.includes(car)) cars.push(car);
+    if (!car.mesh.parent) scene.add(car.mesh);
+  }
+
+  return { cars, update, removeCar, parkCar };
 }

@@ -1,94 +1,103 @@
-// SOLMAR BAY — shared tuning, palette and mission text.
-// One job: every number and name the rest of the game reads.
+// Solmar Bay — tuning, palette, story and missions.
+// One place for every number a designer would tweak.
 
-export const CITY = {
-  half: 300,            // city extends -300..300 on x and z
-  roadGap: 60,          // distance between parallel roads
-  roadWidth: 12,        // asphalt width
-  beachX: 264,          // sand starts here
-  oceanX: 300,          // water starts here
-  tower: { x: 30, z: 30, height: 96 },
+export const CFG = {
+  seed: 1,
+  step: 1 / 60,
+  worldHalf: 175,
+  roadLines: [-60, 0, 60],
+  roadHalf: 5,
+  walkSpeed: 4.6,
+  runSpeed: 8.2,
+  carAccel: 14,
+  carBrake: 26,
+  carMaxSpeed: 40,
+  carReverseMax: 9,
+  carSteer: 1.9,
+  trafficCount: 14,
+  pedCount: 36,
+  policeCap: 4,
+  policeTopSpeed: 36,
+  wantedDecaySeconds: 25,
+  startMoney: 250,
+  startHealth: 100,
+  startAmmo: 24,
+  maxAmmo: 120,
+  bulletDamage: 34,
+  punchDamage: 25,
+  punchRange: 2.6,
+  shootRange: 38,
+  beaconRadius: 7,
+  clockStartMinutes: 17 * 60 + 24,
 };
 
 export const PALETTE = {
-  skyTop: 0x2e6fb0,
-  skyHorizon: 0xffc98a,
-  sun: 0xffe9a8,
-  fog: 0xf2b98a,
-  ground: 0x9aa08a,
-  asphalt: 0x33363c,
-  sidewalk: 0xb9b3a4,
-  sand: 0xe8cf9a,
-  ocean: 0x2f7f9e,
-  building: [0xe8d9b8, 0xd98a6a, 0x7fb3a8, 0xe0a458, 0xc97b7b, 0x8fa8c9, 0xf0e6cc],
-  car: [0xc23b2e, 0x2e6fc2, 0xe8c33a, 0x3aa655, 0xe8e4da, 0x22242a, 0x7a4fa3],
-  police: 0x1d2f4a,
-  beacon: 0xffc93a,
-  club: 0xff5fa2,
+  skyTop: '#6ea8dd',
+  skyHorizon: '#ffb36b',
+  sun: '#ffd9a8',
+  ground: '#9a938a',
+  road: '#2f3339',
+  roadLine: '#e8e4d8',
+  sidewalk: '#b7ab98',
+  sand: '#e8d29a',
+  ocean: '#2e7fa8',
+  building: [0xe8c39a, 0xd9a06b, 0xc98d5f, 0xb7c4cc, 0x9fb4c7, 0xe0d6c0, 0xd97b6c],
+  tower: 0x8fb4d9,
+  club: 0xd63fa0,
+  carColors: [0xc01818, 0x2456c8, 0xe8e8e8, 0x222226, 0xe8a018, 0x2e8b57, 0x7a4fd0],
 };
 
-export const PLAYER = {
-  walkSpeed: 7,
-  runSpeed: 12,
-  radius: 0.7,
-  health: 100,
-  punchDamage: 25,
-  punchRange: 2.2,
-};
-
-export const CAR = {
-  accel: 22,
-  brake: 34,
-  reverseAccel: 12,
-  maxSpeed: 38,          // ~85 mph
-  maxReverse: 10,
-  steer: 1.9,
-  grip: 6.5,
-};
-
-export const POLICE = {
-  maxActive: 4,
-  chaseSpeed: 36,
-  ramDamage: 6,
-  bustRange: 3.2,
-  bustTime: 2.5,
+export const STORY = {
+  city: 'SOLMAR BAY',
+  tagline: 'Sun, salt air, and one debt too many.',
+  hero: 'Rico Vale',
+  creditor: 'Marisol Kane',
+  debt: 2000,
+  intro:
+    'Rico Vale owes Marisol Kane $2,000. Three jobs stand between him and a clean slate. ' +
+    'Steal a car, lose the cops, and get the work done — the bay never sleeps.',
 };
 
 export const MISSIONS = [
   {
-    id: 'M1',
-    title: 'The Pickup',
-    brief: 'Marisol Kane owns your debt. Pick up her package at Rico\u2019s Garage.',
-    objective: 'Pick up the package at Rico\u2019s Garage',
-    target: { x: -60, z: 60, label: 'Garage' },
+    id: 1,
+    title: "Pick up Marisol's package",
+    place: 'Harbor Steps',
+    target: { x: -60, z: 60 },
     reward: 400,
+    hint: 'Get to the beacon at the Harbor Steps.',
   },
   {
-    id: 'M2',
-    title: 'The Delivery',
-    brief: 'Take the package across town to Club Neon Palms. Don\u2019t keep Marisol waiting.',
-    objective: 'Deliver the package to Club Neon Palms',
-    target: { x: 180, z: 120, label: 'Club Neon Palms' },
+    id: 2,
+    title: 'Deliver to the docks contact',
+    place: 'North Docks',
+    target: { x: 60, z: -60 },
     reward: 600,
+    hint: 'The buyer waits at the North Docks. Do not keep him waiting.',
   },
   {
-    id: 'M3',
-    title: 'The Getaway',
-    brief: 'Kane\u2019s rivals are at the club. Deal with them, then lose the heat at the Safehouse.',
-    objective: 'Clear the rivals, then reach the Safehouse',
-    target: { x: 60, z: -120, label: 'Safehouse' },
+    id: 3,
+    title: 'Settle the debt at Club Neon Palms',
+    place: 'Club Neon Palms',
+    target: { x: 60, z: 60 },
     reward: 1000,
+    hint: 'Marisol’s crew guards the club. Expect a fight.',
   },
 ];
 
-export const STORY = {
-  title: 'SOLMAR BAY',
-  subtitle: 'An open-world story in the sun',
-  hero: 'Rico Vale',
-  debt: 'Marisol Kane',
-  intro:
-    'Rico Vale owes Marisol Kane more money than he has. Three jobs stand between him and a clean slate — if the sun, the traffic and the Solmar Bay police let him finish them.',
-};
+export function missionLabel(index) {
+  const m = MISSIONS[index];
+  if (!m) return 'Debt paid — Solmar Bay is yours.';
+  return `M${m.id}/3 — ${m.title} — ${m.place} ($${m.reward})`;
+}
 
-export const CONTROLS_TEXT =
-  'WASD move / drive  ·  Mouse drag to look  ·  E enter or exit a car  ·  Shift run  ·  F punch  ·  Click shoot  ·  Esc pause  ·  M mute';
+export function formatMoney(n) {
+  return `$${Math.floor(n).toLocaleString('en-US')}`;
+}
+
+export function formatClock(totalMinutes) {
+  const mins = Math.floor(totalMinutes) % (24 * 60);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}

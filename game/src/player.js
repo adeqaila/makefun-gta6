@@ -1,71 +1,71 @@
-// SOLMAR BAY — Rico Vale on foot: walk, run, punch, enter cars.
-// One job: the player character when he is not driving.
+// Solmar Bay — Rico Vale on foot.
+// WASD relative to the camera, Shift to run, building collision, walk bob.
 
-import THREE from './three.js';
-import { PLAYER } from './config.js';
-import { buildPersonMesh } from './carMesh.js';
-import { collideBuildings } from './city.js';
+import { makeRico } from './carMesh.js';
+import { CFG } from './config.js';
+import { collideBuildings, clampToWorld } from './city.js';
 
 export function createPlayer(scene) {
-  const mesh = buildPersonMesh(0xd94f3d); // Rico: red shirt, easy to spot
+  const mesh = makeRico();
+  scene.add(mesh);
   const player = {
-    mesh: mesh.group,
-    legs: mesh.legs,
-    arms: mesh.arms,
-    x: -60,
-    z: 120,
+    mesh,
+    x: 0,
+    z: 8,
     heading: Math.PI,
-    speed: 0,
+    health: CFG.startHealth,
+    money: CFG.startMoney,
+    ammo: CFG.startAmmo,
+    inCar: false,
+    car: null,
     walkPhase: 0,
-    health: PLAYER.health,
-    money: 250,
-    ammo: 24,
-    inCar: null,
-    punchCooldown: 0,
+    moving: false,
+    hurtTimer: 0,
+    regenTimer: 0,
   };
-  mesh.group.position.set(player.x, 0, player.z);
-  scene.add(mesh.group);
-  return player;
-}
+  mesh.position.set(player.x, 0, player.z);
+  mesh.rotation.y = player.heading;
 
-export function updatePlayerOnFoot(player, input, cameraYaw, dt, buildings) {
-  const run = input.keys['ShiftLeft'] || input.keys['ShiftRight'];
-  const topSpeed = run ? PLAYER.runSpeed : PLAYER.walkSpeed;
-  let mx = 0;
-  let mz = 0;
-  if (input.keys['KeyW']) mz += 1;
-  if (input.keys['KeyS']) mz -= 1;
-  if (input.keys['KeyA']) mx -= 1;
-  if (input.keys['KeyD']) mx += 1;
-  const moving = mx !== 0 || mz !== 0;
-  if (moving) {
+  function updateOnFoot(dt, input, camYaw, colliders) {
+    let mx = 0;
+    let mz = 0;
+    if (input.has('KeyW')) { mx += -Math.sin(camYaw); mz += -Math.cos(camYaw); }
+    if (input.has('KeyS')) { mx += Math.sin(camYaw); mz += Math.cos(camYaw); }
+    if (input.has('KeyA')) { mx += -Math.cos(camYaw); mz += Math.sin(camYaw); }
+    if (input.has('KeyD')) { mx += Math.cos(camYaw); mz += -Math.sin(camYaw); }
     const len = Math.hypot(mx, mz);
-    mx /= len;
-    mz /= len;
-    // movement is relative to the camera's yaw: W walks away from the camera
-    const sin = Math.sin(cameraYaw);
-    const cos = Math.cos(cameraYaw);
-    const wx = mx * cos + mz * sin;
-    const wz = -mx * sin + mz * cos;
-    player.speed += (topSpeed - player.speed) * Math.min(1, dt * 8);
-    player.x += wx * player.speed * dt;
-    player.z += wz * player.speed * dt;
-    player.heading = Math.atan2(wx, wz);
-    player.walkPhase += dt * player.speed * 1.6;
-  } else {
-    player.speed += (0 - player.speed) * Math.min(1, dt * 8);
+    player.moving = len > 0;
+    if (player.moving) {
+      mx /= len;
+      mz /= len;
+      const speed = input.has('ShiftLeft') || input.has('ShiftRight') ? CFG.runSpeed : CFG.walkSpeed;
+      player.x += mx * speed * dt;
+      player.z += mz * speed * dt;
+      player.heading = Math.atan2(mx, mz);
+      player.walkPhase += dt * speed * 1.6;
+    }
+    const pushed = collideBuildings(player.x, player.z, 0.6, colliders);
+    player.x = pushed.x;
+    player.z = pushed.z;
+    const clamped = clampToWorld(player.x, player.z);
+    player.x = clamped.x;
+    player.z = clamped.z;
+    mesh.position.set(player.x, player.moving ? Math.abs(Math.sin(player.walkPhase)) * 0.07 : 0, player.z);
+    mesh.rotation.y = player.heading;
   }
-  const fixed = collideBuildings(buildings, player.x, player.z, PLAYER.radius);
-  player.x = fixed.x;
-  player.z = fixed.z;
-  player.x = THREE.MathUtils.clamp(player.x, -292, 296);
-  player.z = THREE.MathUtils.clamp(player.z, -292, 292);
-  player.mesh.position.set(player.x, 0, player.z);
-  player.mesh.rotation.y = player.heading;
-  const swing = Math.sin(player.walkPhase) * (player.speed > 0.5 ? 0.55 : 0);
-  player.legs[0].rotation.x = swing;
-  player.legs[1].rotation.x = -swing;
-  player.arms[0].rotation.x = -swing * 0.8;
-  player.arms[1].rotation.x = swing * 0.8;
-  if (player.punchCooldown > 0) player.punchCooldown -= dt;
+
+  function hurt(amount) {
+    player.health = Math.max(0, player.health - amount);
+    player.hurtTimer = 0;
+    player.regenTimer = 0;
+  }
+
+  function regen(dt) {
+    player.regenTimer += dt;
+    if (player.regenTimer > 8 && player.health > 0 && player.health < CFG.startHealth) {
+      player.health = Math.min(CFG.startHealth, player.health + 2 * dt);
+    }
+  }
+
+  return { player, updateOnFoot, hurt, regen };
 }

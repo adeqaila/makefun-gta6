@@ -1,96 +1,97 @@
-// SOLMAR BAY — pedestrians: people walking the sidewalks.
-// One job: peds that stroll, wait at corners and flee from gunfire.
+// Solmar Bay — pedestrians strolling the sidewalks.
+// Thirty-six walkers, each on one sidewalk, bobbing along and wrapping at
+// the edge of town.
 
-import THREE from './three.js';
-import { CITY } from './config.js';
-import { range, pick } from './random.js';
-import { buildPersonMesh } from './carMesh.js';
-import { ROAD_LINES, nearestRoadCoord, roadPointNear } from './city.js';
+import { makePerson } from './carMesh.js';
+import { CFG } from './config.js';
+import { pick, pickSign, range, rangeInt } from './random.js';
 
-const SHIRTS = [0xe8e4da, 0x4fa3c9, 0xe07a5f, 0x81b29a, 0xf2cc8f, 0x9b7ede, 0x3d5a80];
+const SHIRTS = [0xe85d3f, 0x3f8be8, 0xead13f, 0x7ad13f, 0xe83fa0, 0xf0f0f0, 0x8b5cf6];
+const PANTS = [0x2a2f3a, 0x5a4632, 0x3a4a5a, 0x6b6b6b];
 
-export function createPedestrians(scene, rng, count = 36) {
-  const peds = [];
-  for (let i = 0; i < count; i++) {
-    const mesh = buildPersonMesh(pick(rng, SHIRTS));
-    const road = roadPointNear(range(rng, -270, 270), range(rng, -270, 270));
-    const ped = {
-      mesh: mesh.group,
-      legs: mesh.legs,
-      x: road.x + range(rng, -8, 8),
-      z: road.z + range(rng, -8, 8),
-      heading: range(rng, 0, Math.PI * 2),
-      speed: range(rng, 1, 2),
-      walkPhase: range(rng, 0, Math.PI * 2),
-      fleeing: 0,
-      targetX: 0,
-      targetZ: 0,
+export function createPedestrians(scene, rng) {
+  const walkers = [];
+  for (let i = 0; i < CFG.pedCount; i++) {
+    const axis = pick(rng, ['x', 'z']);
+    const line = pick(rng, CFG.roadLines);
+    const side = pickSign(rng) * 7.6;
+    const dir = pickSign(rng);
+    const mesh = makePerson(pick(rng, SHIRTS), pick(rng, PANTS));
+    const walker = {
+      mesh,
+      axis,
+      dir,
+      speed: range(rng, 1.0, 2.0),
+      phase: range(rng, 0, Math.PI * 2),
+      x: 0,
+      z: 0,
+      heading: 0,
+      down: false,
+      downTimer: 0,
     };
-    // keep peds on the sidewalk, beside the road
-    const onXRoad = Math.abs(ped.x - nearestRoadCoord(ped.x)) < Math.abs(ped.z - nearestRoadCoord(ped.z));
-    if (onXRoad) ped.x = nearestRoadCoord(ped.x) + (rng() < 0.5 ? 8.5 : -8.5);
-    else ped.z = nearestRoadCoord(ped.z) + (rng() < 0.5 ? 8.5 : -8.5);
-    ped.targetX = ped.x;
-    ped.targetZ = ped.z;
-    mesh.group.position.set(ped.x, 0, ped.z);
-    scene.add(mesh.group);
-    peds.push(ped);
-  }
-  return { peds };
-}
-
-export function updatePedestrians(peds, dt, rng) {
-  for (const ped of peds.peds) {
-    if (ped.fleeing > 0) {
-      ped.fleeing -= dt;
-      ped.heading = Math.atan2(ped.targetX - ped.x, ped.targetZ - ped.z);
-      ped.speed = 5;
+    const along = range(rng, -160, 160);
+    if (axis === 'x') {
+      walker.x = along;
+      walker.z = line + side;
+      walker.heading = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
     } else {
-      // reached the current corner: pick a new sidewalk target
-      if (Math.hypot(ped.targetX - ped.x, ped.targetZ - ped.z) < 1.5) {
-        const next = roadPointNear(ped.x + range(rng, -90, 90), ped.z + range(rng, -90, 90));
-        const onXRoad = Math.abs(next.x - nearestRoadCoord(next.x)) < Math.abs(next.z - nearestRoadCoord(next.z));
-        ped.targetX = onXRoad ? nearestRoadCoord(next.x) + (rng() < 0.5 ? 8.5 : -8.5) : next.x;
-        ped.targetZ = onXRoad ? next.z : nearestRoadCoord(next.z) + (rng() < 0.5 ? 8.5 : -8.5);
-        ped.speed = range(rng, 1, 2);
+      walker.x = line + side;
+      walker.z = along;
+      walker.heading = dir > 0 ? 0 : Math.PI;
+    }
+    mesh.position.set(walker.x, 0, walker.z);
+    mesh.rotation.y = walker.heading;
+    scene.add(mesh);
+    walkers.push(walker);
+  }
+
+  function update(dt) {
+    for (const w of walkers) {
+      if (w.down) {
+        w.downTimer -= dt;
+        w.mesh.rotation.x = Math.min(1.4, w.mesh.rotation.x + dt * 3);
+        if (w.downTimer <= 0) {
+          w.down = false;
+          w.mesh.rotation.x = 0;
+          w.mesh.visible = true;
+        }
+        continue;
       }
-      ped.heading = Math.atan2(ped.targetX - ped.x, ped.targetZ - ped.z);
+      w.phase += dt * w.speed * 3.2;
+      if (w.axis === 'x') {
+        w.x += w.dir * w.speed * dt;
+        if (w.x > 172) w.x = -172;
+        if (w.x < -172) w.x = 172;
+      } else {
+        w.z += w.dir * w.speed * dt;
+        if (w.z > 172) w.z = -172;
+        if (w.z < -172) w.z = 172;
+      }
+      w.mesh.position.set(w.x, Math.abs(Math.sin(w.phase)) * 0.06, w.z);
+      w.mesh.rotation.y = w.heading;
     }
-    ped.x += Math.sin(ped.heading) * ped.speed * dt;
-    ped.z += Math.cos(ped.heading) * ped.speed * dt;
-    ped.x = THREE.MathUtils.clamp(ped.x, -290, CITY.beachX - 2);
-    ped.z = THREE.MathUtils.clamp(ped.z, -290, 290);
-    ped.walkPhase += dt * ped.speed * 4;
-    ped.mesh.position.set(ped.x, 0, ped.z);
-    ped.mesh.rotation.y = ped.heading;
-    const swing = Math.sin(ped.walkPhase) * 0.5;
-    ped.legs[0].rotation.x = swing;
-    ped.legs[1].rotation.x = -swing;
   }
-}
 
-// Scare every ped near (x,z): they run away from it.
-export function scarePeds(peds, x, z, rng, radius = 18) {
-  for (const ped of peds.peds) {
-    const d = Math.hypot(ped.x - x, ped.z - z);
-    if (d < radius) {
-      ped.fleeing = range(rng, 2, 4);
-      const away = Math.atan2(ped.x - x, ped.z - z);
-      ped.targetX = ped.x + Math.sin(away) * 30;
-      ped.targetZ = ped.z + Math.cos(away) * 30;
-    }
+  // Knock a walker down; they get up after a few seconds.
+  function knockDown(walker) {
+    if (walker.down) return;
+    walker.down = true;
+    walker.downTimer = 4;
   }
-}
 
-export function nearestPed(peds, x, z, maxDist = 3) {
-  let best = null;
-  let bestD = maxDist;
-  for (const ped of peds.peds) {
-    const d = Math.hypot(ped.x - x, ped.z - z);
-    if (d < bestD) {
-      bestD = d;
-      best = ped;
+  function nearest(x, z, maxDist) {
+    let best = null;
+    let bestD = maxDist;
+    for (const w of walkers) {
+      if (w.down) continue;
+      const d = Math.hypot(w.x - x, w.z - z);
+      if (d < bestD) {
+        bestD = d;
+        best = w;
+      }
     }
+    return best;
   }
-  return best;
+
+  return { walkers, update, knockDown, nearest };
 }
