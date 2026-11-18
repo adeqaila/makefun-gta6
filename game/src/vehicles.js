@@ -1,308 +1,116 @@
-// Drivable parked cars, driving physics, stealing and collisions.
-// Cars are built with buildCarMesh from carMesh.js; a car object is
-// { group, kind, color, heading, speed, maxSpeed, accel, isPlayer,
-//   isPolice, isTraffic, health } and group.position is the truth.
+// SOLMAR BAY — driving: arcade car physics, stealing, collisions.
+// One job: move the car the player sits in, and get him in and out of it.
+
+import THREE from './three.js';
+import { CAR, PALETTE } from './config.js';
+import { pick } from './random.js';
 import { buildCarMesh } from './carMesh.js';
+import { collideBuildings } from './city.js';
+import { nearestTrafficCar, removeTrafficCar } from './traffic.js';
 
-const SPECS = {
-  sedan: { maxSpeed: 26, accel: 14 },
-  taxi: { maxSpeed: 26, accel: 14 },
-  truck: { maxSpeed: 20, accel: 10 },
-  sport: { maxSpeed: 38, accel: 20 },
-  police: { maxSpeed: 34, accel: 17 },
-};
-
-const CAR_RADIUS = 1.2;
-const ENTER_DIST = 3.5;
-const PED_HIT_DIST = 1.8;
-const TRAFFIC_HIT_DIST = 2.6;
-
-function makeCar(kind, color, x, z, heading) {
-  const group = buildCarMesh(color, kind);
-  group.position.set(x, 0, z);
-  group.rotation.y = heading;
-  const spec = SPECS[kind] || SPECS.sedan;
-  return {
-    group,
+// A car the player can drive: wraps a mesh plus arcade state.
+export function makeDrivableCar(scene, color, kind, x, z, heading) {
+  const mesh = buildCarMesh(color, kind);
+  const car = {
+    mesh: mesh.group,
+    wheels: mesh.wheels,
+    strobes: mesh.strobes,
+    x, z, heading,
+    speed: 0,
+    steer: 0,
     kind,
     color,
-    heading,
-    speed: 0,
-    maxSpeed: spec.maxSpeed,
-    accel: spec.accel,
-    isPlayer: false,
-    isPolice: kind === 'police',
-    isTraffic: false,
-    health: 100,
+    trafficRef: null, // the traffic car this body was stolen from, if any
   };
+  mesh.group.position.set(x, 0, z);
+  mesh.group.rotation.y = heading;
+  scene.add(mesh.group);
+  return car;
 }
 
-export function createVehicles(scene, city, rng, traffic) {
-  const spawn = (city.spawn && city.spawn.onFoot) || city.spawn || { x: 0, z: 0 };
-
-  // Find a roadside spot near a wanted offset, falling back to the raw point.
-  function parkSpot(dx, dz) {
-    let x = spawn.x + dx;
-    let z = spawn.z + dz;
-    if (city.roadPointNear) {
-      try {
-        const p = city.roadPointNear({ x, z });
-        if (p) { x = p.x; z = p.z; }
-      } catch { /* keep the raw point */ }
-    }
-    if (city.isBlocked) {
-      for (let tries = 0; tries < 6 && city.isBlocked(x, z, CAR_RADIUS + 0.5); tries += 1) {
-        x += 3;
-        z += 2;
-      }
-    }
-    return { x, z };
+export function updateDriving(car, input, dt, buildings, traffic, onBump) {
+  const forward = input.keys['KeyW'] || input.keys['ArrowUp'];
+  const back = input.keys['KeyS'] || input.keys['ArrowDown'];
+  const left = input.keys['KeyA'] || input.keys['ArrowLeft'];
+  const right = input.keys['KeyD'] || input.keys['ArrowRight'];
+  const targetSteer = (left ? 1 : 0) - (right ? 1 : 0);
+  car.steer += (targetSteer - car.steer) * Math.min(1, dt * 8);
+  if (forward) car.speed += CAR.accel * dt;
+  else if (back) car.speed -= (car.speed > 0.5 ? CAR.brake : CAR.reverseAccel) * dt;
+  else car.speed -= Math.sign(car.speed) * Math.min(Math.abs(car.speed), 8 * dt);
+  car.speed = THREE.MathUtils.clamp(car.speed, -CAR.maxReverse, CAR.maxSpeed);
+  const dir = car.speed >= 0 ? 1 : -1;
+  car.heading += car.steer * CAR.steer * dt * Math.min(1, Math.abs(car.speed) / 8) * dir;
+  const nx = car.x + Math.sin(car.heading) * car.speed * dt;
+  const nz = car.z + Math.cos(car.heading) * car.speed * dt;
+  const fixed = collideBuildings(buildings, nx, nz, 2.2);
+  if (fixed.x !== nx || fixed.z !== nz) {
+    car.speed *= 0.4; // scraped a building
+    if (Math.abs(car.speed) > 6 && onBump) onBump(Math.abs(car.speed));
   }
-
-  function park(kind, color, dx, dz, heading) {
-    const spot = parkSpot(dx, dz);
-    const car = makeCar(kind, color, spot.x, spot.z, heading);
-    scene.add(car.group);
-    return car;
-  }
-
-  const parked = [
-    park('sedan', 0x2f6fd0, 14, 6, Math.PI / 2),
-    park('taxi', 0xf2c200, 22, -8, -Math.PI / 2),
-    park('truck', 0xe8e8e8, -18, 10, 0),
-    park('sedan', 0xc0392b, -26, -6, Math.PI),
-    park('sedan', 0x27ae60, 8, -22, Math.PI / 2),
-  ];
-
-  // The red Solmar GT sport car for mission 2.
-  const sportSpot = city.sportCarSpot || { x: spawn.x + 30, z: spawn.z + 30 };
-  const sportCar = makeCar('sport', 0xd21f2b, sportSpot.x, sportSpot.z, 0);
-  sportCar.isMissionSport = true;
-  scene.add(sportCar.group);
-  parked.push(sportCar);
-
-  const drivable = parked;
-  const home = drivable.map((car) => ({
-    car,
-    x: car.group.position.x,
-    z: car.group.position.z,
-    heading: car.heading,
-  }));
-
-  function addWanted(G, n) {
-    if (G && G.police && typeof G.police.addWanted === 'function') {
-      G.police.addWanted(n, G);
-    }
-  }
-
-  function audioEngine(G, car) {
-    if (!G || !G.audio || typeof G.audio.engine !== 'function') return;
-    try {
-      G.audio.engine(Math.min(1, Math.abs(car.speed) / car.maxSpeed));
-    } catch { /* audio is best-effort */ }
-  }
-
-  function nearestCar(pos, maxDist) {
-    let best = null;
-    let bestDist = maxDist;
-    const consider = (car) => {
-      if (!car || car.isPlayer) return;
-      const dx = car.group.position.x - pos.x;
-      const dz = car.group.position.z - pos.z;
-      const d = Math.hypot(dx, dz);
-      if (d < bestDist) { bestDist = d; best = car; }
-    };
-    drivable.forEach(consider);
-    const trafficCars = (traffic && traffic.cars) || [];
-    trafficCars.forEach(consider);
-    return best;
-  }
-
-  function enterCar(player, car, G) {
-    player.onFoot = false;
-    player.inCar = car;
-    car.isPlayer = true;
-    car.speed = 0;
-    player.group.visible = false;
-    player.group.position.copy(car.group.position);
-    if (G) G.message = '';
-  }
-
-  function stealCar(player, car, G) {
-    enterCar(player, car, G);
-    addWanted(G, 1);
-    if (G) {
-      G.message = 'Car stolen! Wanted level up';
-      G.messageTimer = 3;
-    }
-  }
-
-  function exitCar(player, G) {
-    const car = player.inCar;
-    if (!car) return;
-    // Step out on the car's left side.
-    const sideX = Math.cos(car.heading);
-    const sideZ = -Math.sin(car.heading);
-    let x = car.group.position.x + sideX * 2;
-    let z = car.group.position.z + sideZ * 2;
-    if (city.isBlocked && city.isBlocked(x, z, 0.6)) {
-      x = car.group.position.x - sideX * 2;
-      z = car.group.position.z - sideZ * 2;
-    }
-    car.isPlayer = false;
-    car.speed = 0;
-    player.inCar = null;
-    player.onFoot = true;
-    player.group.visible = true;
-    player.group.position.set(x, 0, z);
-    player.heading = car.heading;
-    player.group.rotation.y = car.heading;
-    if (G && G.audio && typeof G.audio.engine === 'function') {
-      try { G.audio.engine(0); } catch { /* ignore */ }
-    }
-  }
-
-  function drive(dt, G, player, car) {
-    const keys = G.input.keys;
-    const fwd = keys.has('KeyW') ? 1 : 0;
-    const back = keys.has('KeyS') ? 1 : 0;
-    const steer = (keys.has('KeyA') ? 1 : 0) - (keys.has('KeyD') ? 1 : 0);
-
-    if (fwd) car.speed += car.accel * dt;
-    if (back) {
-      // Brake hard while rolling forward, reverse once stopped.
-      car.speed -= (car.speed > 0.5 ? car.accel * 1.6 : car.accel * 0.6) * dt;
-    }
-    if (!fwd && !back) {
-      // Rolling drag plus a little engine braking.
-      car.speed -= car.speed * 0.7 * dt;
-    }
-    const reverseMax = 9;
-    car.speed = Math.max(-reverseMax, Math.min(car.maxSpeed, car.speed));
-    if (Math.abs(car.speed) < 0.05 && !fwd && !back) car.speed = 0;
-
-    // Steering bites harder with speed and flips when reversing.
-    const grip = Math.min(1, Math.abs(car.speed) / 10);
-    car.heading += steer * 2.0 * grip * Math.sign(car.speed || 1) * dt;
-    car.group.rotation.y = car.heading;
-
-    const stepX = Math.sin(car.heading) * car.speed * dt;
-    const stepZ = Math.cos(car.heading) * car.speed * dt;
-    const px = car.group.position.x;
-    const pz = car.group.position.z;
-    let hitWall = false;
-    if (!city.isBlocked || !city.isBlocked(px + stepX, pz, CAR_RADIUS)) {
-      car.group.position.x = px + stepX;
-    } else {
-      hitWall = true;
-    }
-    if (!city.isBlocked || !city.isBlocked(car.group.position.x, pz + stepZ, CAR_RADIUS)) {
-      car.group.position.z = pz + stepZ;
-    } else {
-      hitWall = true;
-    }
-    if (typeof city.bounds === 'number' && Number.isFinite(city.bounds)) {
-      const b = city.bounds;
-      car.group.position.x = Math.max(-b, Math.min(b, car.group.position.x));
-      car.group.position.z = Math.max(-b, Math.min(b, car.group.position.z));
-    }
-    if (hitWall && Math.abs(car.speed) > 3) {
-      car.speed *= -0.3;
-      car.health = Math.max(0, car.health - 4);
-      if (G) G.shake = Math.max(G.shake || 0, 0.4);
-    } else if (hitWall) {
-      car.speed *= -0.3;
-    }
-
-    player.group.position.copy(car.group.position);
-    player.heading = car.heading;
-    audioEngine(G, car);
-  }
-
-  function hitPedestrians(dt, G, car) {
-    const peds = (G.peds && G.peds.peds) || [];
-    for (const ped of peds) {
-      if (!ped || !ped.group || ped.fallen) continue;
-      const dx = ped.group.position.x - car.group.position.x;
-      const dz = ped.group.position.z - car.group.position.z;
-      if (Math.hypot(dx, dz) > PED_HIT_DIST) continue;
-      const len = Math.hypot(dx, dz) || 1;
-      ped.group.position.x += (dx / len) * 2.5;
-      ped.group.position.z += (dz / len) * 2.5;
-      ped.fallen = true;
-      ped.fallTimer = 1.5;
-      addWanted(G, 1);
-      if (G) {
-        G.message = 'You hit a pedestrian!';
-        G.messageTimer = 3;
-        G.shake = Math.max(G.shake || 0, 0.5);
-      }
-      car.speed *= 0.85;
-    }
-  }
-
-  function hitTraffic(dt, G, car) {
-    const trafficCars = (traffic && traffic.cars) || [];
-    for (const other of trafficCars) {
-      if (!other || !other.group || other.isPlayer || other === car) continue;
-      const dx = car.group.position.x - other.group.position.x;
-      const dz = car.group.position.z - other.group.position.z;
-      const d = Math.hypot(dx, dz);
-      if (!Number.isFinite(d) || d > TRAFFIC_HIT_DIST || d === 0) continue;
-      const push = (TRAFFIC_HIT_DIST - d) * 0.7;
-      other.group.position.x -= (dx / d) * push;
-      other.group.position.z -= (dz / d) * push;
-      other.speed = (other.speed || 0) * 0.5 + car.speed * 0.2;
-      car.speed *= 0.7;
-      if (G) G.shake = Math.max(G.shake || 0, 0.35);
-    }
-  }
-
-  function update(dt, G) {
-    const player = G.player;
-    if (!player) return;
-
-    // E: get in / steal a nearby car, or get out while slow (play screen only).
-    const pressed = G.input && G.input.pressed;
-    if (pressed && pressed.has('KeyE') && G.screen === 'play') {
-      pressed.delete('KeyE');
-      if (player.onFoot) {
-        const car = nearestCar(player.pos, ENTER_DIST);
-        if (car) {
-          if (car.isTraffic) stealCar(player, car, G);
-          else enterCar(player, car, G);
-        }
-      } else if (player.inCar) {
-        if (Math.abs(player.inCar.speed) < 1) exitCar(player, G);
-        else if (G) {
-          G.message = 'Slow down to get out!';
-          G.messageTimer = 1.5;
-        }
-      }
-    }
-
-    if (!player.onFoot && player.inCar) {
-      if (G.screen === 'play') {
-        drive(dt, G, player, player.inCar);
-        hitPedestrians(dt, G, player.inCar);
-        hitTraffic(dt, G, player.inCar);
-      } else {
-        audioEngine(G, player.inCar);
+  car.x = THREE.MathUtils.clamp(fixed.x, -292, 296);
+  car.z = THREE.MathUtils.clamp(fixed.z, -292, 292);
+  // bump into traffic cars: slow down, shove them sideways out of the way
+  for (const other of traffic.cars) {
+    if (other.bumpCd > 0) other.bumpCd -= dt;
+    const d = Math.hypot(other.x - car.x, other.z - car.z);
+    if (d < 3.4 && d > 0.01) {
+      const push = (3.4 - d) * 0.5;
+      const ax = (other.x - car.x) / d;
+      const az = (other.z - car.z) / d;
+      // mostly sideways, so the shoved car leaves the player's lane
+      other.x += ax * push * 0.3 + -az * push * 1.1;
+      other.z += az * push * 0.3 + ax * push * 1.1;
+      if (other.bumpCd <= 0) {
+        other.bumpCd = 0.5;
+        car.speed *= 0.9;
+        if (Math.abs(car.speed) > 8 && onBump) onBump(Math.abs(car.speed));
       }
     }
   }
+  car.mesh.position.set(car.x, 0, car.z);
+  car.mesh.rotation.y = car.heading;
+  for (const w of car.wheels) w.rotation.x += (car.speed * dt) / 0.42;
+  return car.speed;
+}
 
-  function reset() {
-    for (const entry of home) {
-      const car = entry.car;
-      car.group.position.set(entry.x, 0, entry.z);
-      car.heading = entry.heading;
-      car.group.rotation.y = entry.heading;
-      car.speed = 0;
-      car.health = 100;
-      car.isPlayer = false;
+// Try to enter the nearest car: the player's own parked car, or steal a traffic car.
+export function tryEnterCar(world) {
+  const { player, traffic, scene, rng } = world;
+  if (player.inCar) return null;
+  // own parked car first
+  if (world.parkedCar) {
+    const d = Math.hypot(world.parkedCar.x - player.x, world.parkedCar.z - player.z);
+    if (d < 4) {
+      player.inCar = world.parkedCar;
+      world.parkedCar = null;
+      player.mesh.visible = false;
+      return { stolen: false };
     }
   }
+  const victim = nearestTrafficCar(traffic, player.x, player.z, 4.5);
+  if (!victim) return null;
+  removeTrafficCar(scene, traffic, victim);
+  const car = makeDrivableCar(scene, pick(rng, PALETTE.car), 'sedan', victim.x, victim.z, victim.heading);
+  car.speed = 0;
+  player.inCar = car;
+  player.mesh.visible = false;
+  return { stolen: true };
+}
 
-  return { drivable, update, nearestCar, enterCar, exitCar, stealCar, reset };
+export function exitCar(world) {
+  const { player } = world;
+  const car = player.inCar;
+  if (!car) return;
+  player.inCar = null;
+  player.x = car.x + Math.sin(car.heading + Math.PI / 2) * 2.5;
+  player.z = car.z + Math.cos(car.heading + Math.PI / 2) * 2.5;
+  player.heading = car.heading;
+  player.mesh.visible = true;
+  player.mesh.position.set(player.x, 0, player.z);
+  world.parkedCar = car;
+}
+
+export function speedMph(car) {
+  return Math.abs(car.speed) * 2.23694;
 }

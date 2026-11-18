@@ -1,457 +1,199 @@
-// The four screenshot scenes behind ?shot=chase|street|onfoot|start.
-// Each one resets the world, then plays the real rules forward for a fixed
-// number of fixed steps, steered by a small driving autopilot, so the frame
-// is what a short stretch of real play looks like — and the same seed
-// always gives the same frame.
+// SOLMAR BAY — screenshot staging: four fixed, deterministic scenes.
+// One job: place every actor for a shot, then run the world a fixed number of steps.
 
-const STEP = 1 / 60;
+import THREE from './three.js';
+import { MISSIONS } from './config.js';
+import { makeDrivableCar, speedMph } from './vehicles.js';
+import { spawnEnemy } from './combat.js';
+import { startMission } from './missions.js';
 
-function wrapAngle(a) {
-  while (a > Math.PI) a -= Math.PI * 2;
-  while (a < -Math.PI) a += Math.PI * 2;
-  return a;
+const FIXED_DT = 1 / 60;
+
+function resetWorld(world, money = 250, ammo = 24) {
+  const { player, police, combat, scene } = world;
+  player.health = 100;
+  player.money = money;
+  player.ammo = ammo;
+  player.punchCooldown = 0;
+  police.wanted = 0;
+  police.bustTimer = 0;
+  police.quietTimer = 0;
+  for (const car of [...police.cars]) scene.remove(car.mesh);
+  police.cars = [];
+  for (const enemy of [...combat.enemies]) {
+    scene.remove(enemy.mesh);
+  }
+  combat.enemies = [];
+  if (world.parkedCar) {
+    scene.remove(world.parkedCar.mesh);
+    world.parkedCar = null;
+  }
+  if (player.inCar) {
+    scene.remove(player.inCar.mesh);
+    player.inCar = null;
+    player.mesh.visible = true;
+  }
+  world.gameMinutes = 16 * 60 + 20;
+  world.time = 0;
 }
 
-function resetWorld(G) {
-  try {
-    G.traffic?.reset?.();
-  } catch {
-    // A reset that throws must not stop the shot.
-  }
-  try {
-    G.peds?.reset?.();
-  } catch {
-    // Ignore.
-  }
-  try {
-    G.police?.clear?.();
-  } catch {
-    // Ignore.
-  }
-  try {
-    G.combat?.clearEnemies?.();
-  } catch {
-    // Ignore.
-  }
-  try {
-    G.player?.reset?.();
-  } catch {
-    // Ignore.
-  }
-  try {
-    G.missions?.reset?.();
-  } catch {
-    // Ignore.
-  }
-  G.wanted = 0;
-  G.wantedHeat = 0;
-  G.cameraOverride = null;
-  G.banner = '';
-  G.bannerTimer = 0;
-  G.message = '';
-  G.messageTimer = 0;
+function putPlayerInCar(world, color, kind, x, z, heading) {
+  const car = makeDrivableCar(world.scene, color, kind, x, z, heading);
+  car.speed = 0;
+  world.player.inCar = car;
+  world.player.mesh.visible = false;
+  world.player.x = x;
+  world.player.z = z;
+  world.player.heading = heading;
+  return car;
 }
 
-/** Fill G.input.keys with synthetic driving input toward a world point. */
-function driveToward(G, tx, tz) {
-  const car = G.player?.inCar;
-  if (!car || !car.group) {
-    G.input.keys = new Set();
+function putPoliceBehind(world, x, z, heading, n) {
+  for (let i = 0; i < n; i++) {
+    const car = makeDrivableCar(world.scene, 0x1d2f4a, 'police', x - i * 16, z + (i % 2 === 0 ? 3 : -3), heading);
+    car.speed = 26 + i * 2;
+    world.police.cars.push(car);
+  }
+}
+
+// Move every traffic car the shot does not feature onto far avenues, so no
+// random car can drift into the player's path and spoil the staged scene.
+function clearTraffic(world) {
+  const avenues = [-240, -180, -120, 120, 180, 240];
+  world.traffic.cars.forEach((car, i) => {
+    car.x = avenues[i % avenues.length];
+    car.z = -220 + i * 34;
+    car.heading = i % 2 === 0 ? 0 : Math.PI;
+    car.speed = 10;
+    car.cruise = 10;
+    car.wait = 0;
+  });
+}
+
+// Stage shot n (1-4). Returns {steps, input} for the fixed-step run.
+export function stageShot(world, n) {
+  const { player, rng } = world;
+  world.state = 'playing';
+  world.hud.el.style.display = 'block';
+  if (n === 1) {
+    // COVER — chase: red Solmar GT at speed, three police on its tail, wanted 3.
+    resetWorld(world, 1050, 24);
+    spawnEnemy(world.combat, world.scene, rng, 188, 126);
+    spawnEnemy(world.combat, world.scene, rng, 172, 116);
+    startMission(world, 2);
+    world.missions.rivalsSpawned = true; // rivals already placed at the club
+    const car = putPlayerInCar(world, 0xc23b2e, 'sport', -120, 0, Math.PI / 2);
+    car.speed = 26;
+    world.police.wanted = 3;
+    putPoliceBehind(world, -152, 0, Math.PI / 2, 3);
+    clearTraffic(world);
+    // traffic ahead in the same avenue, in the outer lanes (never in the
+    // player's path, so the chase is never spoiled by a rear-end graze)
+    world.traffic.cars[0].x = -60; world.traffic.cars[0].z = 4.5; world.traffic.cars[0].heading = Math.PI / 2; world.traffic.cars[0].speed = 12;
+    world.traffic.cars[1].x = -30; world.traffic.cars[1].z = -4.5; world.traffic.cars[1].heading = Math.PI / 2; world.traffic.cars[1].speed = 10;
+    world.traffic.cars[2].x = -95; world.traffic.cars[2].z = -4.5; world.traffic.cars[2].heading = -Math.PI / 2; world.traffic.cars[2].speed = 11;
+    world.cameraYaw = Math.PI / 2;
+    return { steps: 360, input: { KeyW: true } };
+  }
+  if (n === 2) {
+    // STREET — blue sedan cruising the central avenue, traffic and peds close by.
+    resetWorld(world, 250, 24);
+    startMission(world, 0);
+    const car = putPlayerInCar(world, 0x2e6fc2, 'sedan', 0, -120, 0);
+    car.speed = 14;
+    world.police.wanted = 0;
+    clearTraffic(world);
+    world.traffic.cars[0].x = 4.5; world.traffic.cars[0].z = -58; world.traffic.cars[0].heading = 0; world.traffic.cars[0].speed = 11;
+    world.traffic.cars[1].x = 4.5; world.traffic.cars[1].z = -45; world.traffic.cars[1].heading = 0; world.traffic.cars[1].speed = 12;
+    world.traffic.cars[2].x = -4.5; world.traffic.cars[2].z = 30; world.traffic.cars[2].heading = Math.PI; world.traffic.cars[2].speed = 10;
+    world.traffic.cars[3].x = 4.5; world.traffic.cars[3].z = -41; world.traffic.cars[3].heading = 0; world.traffic.cars[3].speed = 12;
+    // peds on the sidewalks just ahead of where the car ends up
+    const near = world.peds.peds.slice(0, 5);
+    const spots = [[8.5, -32], [-8.5, -24], [8.5, -16], [-8.5, -38], [8.5, -42]];
+    near.forEach((ped, i) => {
+      ped.x = spots[i][0];
+      ped.z = spots[i][1];
+      ped.targetX = ped.x;
+      ped.targetZ = ped.z + 40;
+      ped.speed = 1.5;
+    });
+    world.cameraYaw = 0;
+    return { steps: 180, input: { KeyW: true } };
+  }
+  if (n === 3) {
+    // ON FOOT — Rico walks east down the avenue toward a rival, Club Neon Palms beacon ahead.
+    resetWorld(world, 650, 24);
+    startMission(world, 1);
+    player.x = 140;
+    player.z = 120;
+    player.heading = Math.PI / 2;
+    player.mesh.position.set(140, 0, 120);
+    player.mesh.rotation.y = Math.PI / 2;
+    world.police.wanted = 1;
+    clearTraffic(world);
+    spawnEnemy(world.combat, world.scene, rng, 158, 114);
+    world.cameraYaw = Math.PI / 2;
+    return { steps: 90, input: { KeyW: true } };
+  }
+  // START — aerial vista of the city, tower and ocean, title screen on top.
+  resetWorld(world, 250, 24);
+  world.state = 'title';
+  world.hud.el.style.display = 'none';
+  player.x = -60;
+  player.z = 120;
+  player.mesh.position.set(-60, 0, 120);
+  startMission(world, 0);
+  return { steps: 0, input: {} };
+}
+
+// Position the camera for shot n after the fixed-step run.
+export function shotCamera(world, n) {
+  const { camera, player } = world;
+  if (n === 1) {
+    // chase, seen from ahead: the Solmar GT head-on, police closing in behind it
+    const car = player.inCar;
+    const f = new THREE.Vector3(Math.sin(car.heading), 0, Math.cos(car.heading));
+    const r = new THREE.Vector3(f.z, 0, -f.x);
+    camera.position.copy(new THREE.Vector3(car.x, 0, car.z)).addScaledVector(f, 17).addScaledVector(r, 5).add(new THREE.Vector3(0, 5.5, 0));
+    camera.lookAt(car.x - f.x * 12, 1.4, car.z - f.z * 12);
     return;
   }
-  const pos = car.group.position;
-  const heading = car.heading || 0;
-  const desired = Math.atan2(tx - pos.x, tz - pos.z);
-  const diff = wrapAngle(desired - heading);
-  const keys = new Set();
-  if (Math.abs(diff) > 2.1) {
-    keys.add('KeyS');
-  } else {
-    keys.add('KeyW');
+  if (n === 2) {
+    const car = player.inCar;
+    const f = new THREE.Vector3(Math.sin(car.heading), 0, Math.cos(car.heading));
+    const r = new THREE.Vector3(f.z, 0, -f.x);
+    // higher and further to the right, so the near building wall on the
+    // left drops out of the frame and the avenue reads cleanly
+    camera.position.copy(new THREE.Vector3(car.x, 0, car.z)).addScaledVector(f, -13).addScaledVector(r, 4.5).add(new THREE.Vector3(0, 7, 0));
+    camera.lookAt(car.x + f.x * 10, 1.2, car.z + f.z * 10);
+    return;
   }
-  // Steering: heading grows toward +X, which is screen-left when the camera
-  // sits behind the car, so a target to the left (diff > 0) needs KeyA.
-  if (diff > 0.18) keys.add('KeyA');
-  else if (diff < -0.18) keys.add('KeyD');
-  G.input.keys = keys;
+  if (n === 3) {
+    const f = new THREE.Vector3(Math.sin(player.heading), 0, Math.cos(player.heading));
+    const r = new THREE.Vector3(f.z, 0, -f.x);
+    camera.position.copy(new THREE.Vector3(player.x, 0, player.z)).addScaledVector(f, -7).addScaledVector(r, 3).add(new THREE.Vector3(0, 3, 0));
+    camera.lookAt(player.x + f.x * 12, 1.4, player.z + f.z * 12);
+    return;
+  }
+  // aerial vista: high over the south-west, looking at the tower and the ocean
+  camera.position.set(-150, 155, -150);
+  camera.lookAt(80, 0, 80);
 }
 
-/** Run the live update order for `seconds`, optionally steering each step. */
-function simulate(G, seconds, steer) {
-  const steps = Math.round(seconds / STEP);
-  for (let i = 0; i < steps; i += 1) {
-    G.time += STEP;
-    // Same clock/timer bookkeeping as the live loop's step(): banners and
-    // toasts must expire during a staged shot, not hang over the frame.
-    // One in-game minute passes every two real seconds (0.5 min per second).
-    G.gameMinutes += STEP * 0.5;
-    if (G.bannerTimer > 0) G.bannerTimer -= STEP;
-    if (G.messageTimer > 0) G.messageTimer -= STEP;
-    if (G.shake > 0) G.shake = Math.max(0, G.shake - STEP * 1.5);
-    if (steer) steer();
-    try {
-      G.missions?.update?.(STEP, G);
-    } catch {
-      // Ignore.
-    }
-    try {
-      G.player?.update?.(STEP, G);
-    } catch {
-      // Ignore.
-    }
-    try {
-      G.vehicles?.update?.(STEP, G);
-    } catch {
-      // Ignore.
-    }
-    try {
-      G.police?.update?.(STEP, G);
-    } catch {
-      // Ignore.
-    }
-    try {
-      G.traffic?.update?.(STEP, G);
-    } catch {
-      // Ignore.
-    }
-    try {
-      G.peds?.update?.(STEP, G);
-    } catch {
-      // Ignore.
-    }
-    try {
-      G.combat?.update?.(STEP, G);
-    } catch {
-      // Ignore.
-    }
-  }
-}
-
-function findCar(G, wantSport) {
-  const list = G.vehicles?.drivable;
-  if (!Array.isArray(list)) return null;
-  if (wantSport) return list.find((car) => car?.isMissionSport) || null;
-  return list.find((car) => car && !car.isMissionSport) || list[0] || null;
-}
-
-function enterCar(G, car) {
-  if (!car) return;
-  try {
-    if (typeof G.vehicles?.enterCar === 'function') {
-      G.vehicles.enterCar(G.player, car, G);
-      return;
-    }
-  } catch {
-    // Fall through to the manual fallback below.
-  }
-  // Last resort when the vehicles module has no enterCar yet.
-  if (G.player) {
-    G.player.inCar = car;
-    G.player.onFoot = false;
-  }
-}
-
-/** The distinct avenue coordinates of the grid (both axes share them). */
-function avenueAts(G) {
-  const ats = (G.city?.avenues || []).map((a) => a.at);
-  const unique = [...new Set(ats)].sort((a, b) => a - b);
-  return unique.length ? unique : [-222, -148, -74, 0, 74, 148, 222];
-}
-
-function nearestAvenue(G, value) {
-  const ats = avenueAts(G);
-  let best = ats[0];
-  for (const at of ats) {
-    if (Math.abs(value - at) < Math.abs(value - best)) best = at;
-  }
-  return best;
-}
-
-/**
- * A target 70 units ahead on the avenue the car is already on, in its lane.
- * At an intersection the driver sometimes turns onto the crossing avenue
- * instead of going straight — chosen once per target, so the car commits.
- */
-function roadTarget(G, car) {
-  const clampRoad = (v) => Math.max(-245, Math.min(245, v));
-  const pos = car.group.position;
-  const heading = car.heading || 0;
-  const alongX = Math.abs(Math.sin(heading)) >= Math.abs(Math.cos(heading));
-  if (alongX) {
-    const dir = Math.sin(heading) >= 0 ? 1 : -1;
-    // About to leave the city along this avenue: turn onto the nearest
-    // crossing avenue instead of driving out onto the sand.
-    if (Math.abs(pos.x) > 205 && dir === Math.sign(pos.x)) {
-      const crossAt = nearestAvenue(G, pos.x);
-      const zDir = G.rng() < 0.5 ? 1 : -1;
-      return {
-        x: clampRoad(crossAt + G.city.laneFor('z', zDir > 0 ? 0 : Math.PI)),
-        z: clampRoad(pos.z + zDir * 55),
-      };
-    }
-    const avZ = nearestAvenue(G, pos.z);
-    const crossAt = nearestAvenue(G, pos.x);
-    if (Math.abs(pos.x - crossAt) < 12 && G.rng() < 0.35) {
-      const zDir = G.rng() < 0.5 ? 1 : -1;
-      return {
-        x: clampRoad(crossAt + G.city.laneFor('z', zDir > 0 ? 0 : Math.PI)),
-        z: clampRoad(pos.z + zDir * 55),
-      };
-    }
-    return { x: clampRoad(pos.x + dir * 70), z: clampRoad(avZ + G.city.laneFor('x', heading)) };
-  }
-  const dir = Math.cos(heading) >= 0 ? 1 : -1;
-  if (Math.abs(pos.z) > 205 && dir === Math.sign(pos.z)) {
-    const crossAt = nearestAvenue(G, pos.z);
-    const xDir = G.rng() < 0.5 ? 1 : -1;
-    return {
-      x: clampRoad(pos.x + xDir * 55),
-      z: clampRoad(crossAt + G.city.laneFor('x', xDir > 0 ? Math.PI / 2 : -Math.PI / 2)),
-    };
-  }
-  const avX = nearestAvenue(G, pos.x);
-  const crossAt = nearestAvenue(G, pos.z);
-  if (Math.abs(pos.z - crossAt) < 12 && G.rng() < 0.35) {
-    const xDir = G.rng() < 0.5 ? 1 : -1;
-    return {
-      x: clampRoad(pos.x + xDir * 55),
-      z: clampRoad(crossAt + G.city.laneFor('x', xDir > 0 ? Math.PI / 2 : -Math.PI / 2)),
-    };
-  }
-  return { x: clampRoad(avX + G.city.laneFor('z', heading)), z: clampRoad(pos.z + dir * 70) };
-}
-
-/** A steer closure that keeps the player's car driving on the roads. */
-function makeRoadDriver(G) {
-  let target = null;
-  return () => {
-    const car = G.player?.inCar;
-    if (!car?.group) return;
-    const pos = car.group.position;
-    if (!target || Math.hypot(pos.x - target.x, pos.z - target.z) < 12) {
-      target = roadTarget(G, car);
-    }
-    driveToward(G, target.x, target.z);
+export function shotState(world, n) {
+  const { player } = world;
+  return {
+    shot: n,
+    playerX: Math.round((player.inCar ? player.inCar.x : player.x) * 100) / 100,
+    playerZ: Math.round((player.inCar ? player.inCar.z : player.z) * 100) / 100,
+    speedMph: player.inCar ? Math.round(speedMph(player.inCar) * 10) / 10 : 0,
+    wanted: world.police.wanted,
+    money: player.money,
+    ammo: player.ammo,
+    policeCars: world.police.cars.length,
+    mission: world.missions.current,
+    gameMinutes: Math.round(world.gameMinutes * 100) / 100,
   };
 }
 
-/**
- * Put one extra traffic car on the player's avenue, `ahead` units in front
- * of the player car, driving `heading`. Used so the street/chase frames show
- * dense traffic instead of an empty road.
- */
-function spawnTrafficOnAvenue(G, ahead, heading) {
-  const car = G.player?.inCar;
-  if (!car?.group || typeof G.traffic?.spawnTrafficCar !== 'function') return;
-  // Keep the heading in (-PI, PI] so laneFor picks the right-hand lane.
-  heading = wrapAngle(heading);
-  const pos = car.group.position;
-  const alongX = Math.abs(Math.sin(car.heading || 0)) >= Math.abs(Math.cos(car.heading || 0));
-  let spot;
-  if (alongX) {
-    const avZ = nearestAvenue(G, pos.z);
-    const lane = G.city.laneFor('x', heading);
-    const x = pos.x + Math.sin(car.heading || 0) * ahead;
-    spot = { axis: 'x', avenue: avZ, lane, x, z: avZ + lane, heading };
-  } else {
-    const avX = nearestAvenue(G, pos.x);
-    const lane = G.city.laneFor('z', heading);
-    const z = pos.z + Math.cos(car.heading || 0) * ahead;
-    spot = { axis: 'z', avenue: avX, lane, x: avX + lane, z, heading };
-  }
-  try {
-    G.traffic.spawnTrafficCar(spot);
-  } catch {
-    // Extra traffic is garnish; a failed spawn must not stop the shot.
-  }
-}
-
-/**
- * Frame the chase like a movie still: camera high over the road ahead of
- * the player car, looking back down the street so the car and the police
- * behind it are both in frame.
- */
-function frameChaseCamera(G) {
-  const car = G.player?.inCar;
-  if (!car?.group) return;
-  const h = car.heading || 0;
-  const fx = Math.sin(h);
-  const fz = Math.cos(h);
-  const p = car.group.position;
-  G.cameraOverride = {
-    pos: { x: p.x + fx * 16, y: 9, z: p.z + fz * 16 },
-    look: { x: p.x - fx * 8, y: 1.5, z: p.z - fz * 8 },
-  };
-  G.cameraYaw = h;
-}
-
-/** A staged frame shows a healthy Rico at the briefed wanted level. */
-function restoreForShot(G, wanted) {
-  if (G.player) G.player.health = 100;
-  if (typeof wanted === 'number') {
-    G.wanted = wanted;
-    G.wantedHeat = 0;
-  }
-}
-
-function chaseShot(G) {
-  resetWorld(G);
-  // Play screen first: player, vehicles, police and combat all gate on it.
-  G.screen = 'play';
-  G.missions?.startMission?.(2);
-  const sport = findCar(G, true);
-  enterCar(G, sport);
-  try {
-    G.police?.addWanted?.(3, G);
-  } catch {
-    // Ignore.
-  }
-  const p = G.player?.pos;
-  for (const [dx, dz] of [[14, 8], [-12, 14]]) {
-    try {
-      G.police?.spawnPoliceCar?.({ x: (p?.x || 0) + dx, y: 0, z: (p?.z || 0) + dz }, G);
-    } catch {
-      // One missing cruiser must not stop the shot.
-    }
-  }
-  // A couple of cars ahead on the same avenue for the chase to weave past.
-  spawnTrafficOnAvenue(G, 45, Math.PI / 2);
-  spawnTrafficOnAvenue(G, 80, Math.PI / 2);
-  simulate(G, 12, makeRoadDriver(G));
-  // The pursuit must read on camera: if the closest unit fell too far
-  // behind during the drive, pull it back to 14 units behind the player.
-  try {
-    const car = G.player?.inCar;
-    if (car?.group && Array.isArray(G.police?.cars) && G.police.cars.length) {
-      let nearest = null;
-      let nearestD = Infinity;
-      for (const unit of G.police.cars) {
-        const d = Math.hypot(
-          unit.group.position.x - car.group.position.x,
-          unit.group.position.z - car.group.position.z,
-        );
-        if (d < nearestD) { nearestD = d; nearest = unit; }
-      }
-      if (nearest && nearestD > 30) {
-        const h = car.heading || 0;
-        nearest.group.position.set(
-          car.group.position.x - Math.sin(h) * 14,
-          0,
-          car.group.position.z - Math.cos(h) * 14,
-        );
-        nearest.heading = h;
-        nearest.group.rotation.y = h;
-        nearest.speed = car.speed || 20;
-      }
-    }
-  } catch {
-    // Staging the pursuit is optional; the frame stands without it.
-  }
-  restoreForShot(G, 3);
-  // Traffic behind the player reads in the backward-looking chase frame.
-  const h = G.player?.inCar?.heading || 0;
-  spawnTrafficOnAvenue(G, -25, h);
-  spawnTrafficOnAvenue(G, -45, h);
-  frameChaseCamera(G);
-  G.screen = 'play';
-  return { screen: 'play' };
-}
-
-function streetShot(G) {
-  resetWorld(G);
-  // Play screen first: player, vehicles, police and combat all gate on it.
-  G.screen = 'play';
-  G.missions?.startMission?.(0);
-  const sedan = findCar(G, false);
-  enterCar(G, sedan);
-  // Fill the player's avenue with traffic ahead so the street reads busy.
-  // The sedan starts facing +X, so its avenue runs east-west here.
-  spawnTrafficOnAvenue(G, 30, Math.PI / 2);
-  spawnTrafficOnAvenue(G, 55, Math.PI / 2);
-  spawnTrafficOnAvenue(G, 85, Math.PI / 2);
-  spawnTrafficOnAvenue(G, 65, -Math.PI / 2);
-  simulate(G, 8, makeRoadDriver(G));
-  restoreForShot(G, 0);
-  // Guarantee traffic in the frozen frame: cars ahead on the same avenue.
-  const h = G.player?.inCar?.heading || 0;
-  spawnTrafficOnAvenue(G, 25, h);
-  spawnTrafficOnAvenue(G, 48, h);
-  spawnTrafficOnAvenue(G, 72, h);
-  spawnTrafficOnAvenue(G, 55, h + Math.PI);
-  G.cameraOverride = null;
-  G.cameraYaw = G.player?.inCar?.heading ?? G.player?.heading ?? 0;
-  G.screen = 'play';
-  return { screen: 'play' };
-}
-
-function onFootShot(G) {
-  resetWorld(G);
-  // Play screen first: player, vehicles, police and combat all gate on it.
-  G.screen = 'play';
-  G.missions?.startMission?.(0);
-  // Stage 1, so the club beacon stands down this same avenue, in frame.
-  if (G.missions) G.missions.stage = 1;
-  // Rico on avenue z=74 facing east, a gunman 12 units ahead on the road,
-  // camera over his shoulder: street, enemy and beacon all in one frame.
-  const p = G.player?.pos;
-  if (p) p.set(66, 0, 74);
-  if (G.player) {
-    G.player.heading = Math.PI / 2;
-    G.player.group.rotation.y = Math.PI / 2;
-  }
-  try {
-    G.combat?.spawnEnemy?.({ x: 78, y: 0, z: 76.5 }, G);
-  } catch {
-    // Ignore.
-  }
-  try {
-    G.police?.addWanted?.(1, G);
-  } catch {
-    // Ignore.
-  }
-  // Camera a touch to the side so Rico and the gunman do not line up.
-  G.cameraOverride = {
-    pos: { x: 60, y: 3.2, z: 71.5 },
-    look: { x: 78, y: 1.5, z: 76.5 },
-  };
-  simulate(G, 4, null);
-  restoreForShot(G, 1);
-  G.screen = 'play';
-  return { screen: 'play' };
-}
-
-function startShot(G) {
-  resetWorld(G);
-  // Ambient city only: traffic and pedestrians drift past a standing Rico.
-  const steps = Math.round(5 / STEP);
-  for (let i = 0; i < steps; i += 1) {
-    G.time += STEP;
-    try {
-      G.traffic?.update?.(STEP, G);
-    } catch {
-      // Ignore.
-    }
-    try {
-      G.peds?.update?.(STEP, G);
-    } catch {
-      // Ignore.
-    }
-  }
-  G.cameraOverride = {
-    pos: { x: 120, y: 70, z: 160 },
-    look: { x: 0, y: 10, z: 0 },
-  };
-  G.screen = 'title';
-  return { screen: 'title' };
-}
-
-/**
- * Stage the named scene on G and say which screen to draw over it.
- * Any unknown name stages the title vista, like the starter does.
- */
-export function stageShot(name, G) {
-  if (name === 'chase') return chaseShot(G);
-  if (name === 'street') return streetShot(G);
-  if (name === 'onfoot') return onFootShot(G);
-  return startShot(G);
-}
+export { FIXED_DT, MISSIONS };

@@ -1,139 +1,95 @@
-// Traffic: the NPC cars that keep Solmar Bay's avenues alive. Each car owns
-// one road — an avenue plus a lane offset — and drives along it, slowing for
-// the car ahead and sometimes turning at an intersection. Cars never leave
-// their road, so they never hit a building. A traffic car can be stolen:
-// builder B takes over its group, this module just stops driving it.
+// SOLMAR BAY — traffic: NPC cars cruising the road grid.
+// One job: keep cars on roads, turning at intersections, at sane speeds.
 
-import { TRAFFIC } from './config.js';
-import { randPick, randRange } from './random.js';
-import { buildCarMesh, randomCarColor } from './carMesh.js';
+import THREE from './three.js';
+import { CITY, PALETTE } from './config.js';
+import { range, pick } from './random.js';
+import { buildCarMesh } from './carMesh.js';
+import { ROAD_LINES, nearestRoadCoord } from './city.js';
 
-const KINDS = ['sedan', 'sedan', 'sedan', 'sport', 'taxi', 'taxi', 'truck'];
-const TURN_TIME = 0.8;
+const LANES = [-3, 3]; // right-hand lanes, offset from the road centre line
 
-/** Turn a heading toward a target heading, shortest way around, capped per second. */
-function turnHeadingToward(heading, target, rate, dt) {
-  let diff = target - heading;
-  while (diff > Math.PI) diff -= Math.PI * 2;
-  while (diff < -Math.PI) diff += Math.PI * 2;
-  const step = Math.max(-rate * dt, Math.min(rate * dt, diff));
-  return heading + step;
+export function createTraffic(scene, rng, count = 14) {
+  const cars = [];
+  for (let i = 0; i < count; i++) {
+    const mesh = buildCarMesh(pick(rng, PALETTE.car), rng() < 0.25 ? 'sport' : 'sedan');
+    const horizontal = rng() < 0.5;
+    const line = pick(rng, ROAD_LINES);
+    const along = range(rng, -270, 270);
+    const lane = pick(rng, LANES);
+    const dir = rng() < 0.5 ? 1 : -1;
+    const car = {
+      mesh: mesh.group,
+      wheels: mesh.wheels,
+      x: horizontal ? along : line + lane,
+      z: horizontal ? line + lane : along,
+      heading: horizontal ? (dir > 0 ? 0 : Math.PI) : (dir > 0 ? Math.PI / 2 : -Math.PI / 2),
+      speed: range(rng, 7, 12),
+      cruise: range(rng, 7, 12),
+      horizontal,
+      line,
+      wait: 0,
+      bumpCd: 0,
+    };
+    mesh.group.position.set(car.x, 0, car.z);
+    mesh.group.rotation.y = car.heading;
+    scene.add(mesh.group);
+    cars.push(car);
+  }
+  return { cars };
 }
 
-/**
- * Create the traffic system. `city` is the object buildCity returned.
- * Returns { cars, update(dt, G), reset(), spawnTrafficCar(spot?) }.
- */
-export function createTraffic(scene, city, rng, carMeshModule) {
-  const makeCar = (carMeshModule && carMeshModule.buildCarMesh) || buildCarMesh;
-  const cars = [];
-
-  function placeOnRoad(car, spot) {
-    const point = spot && spot.axis ? spot : city.randomRoadPoint(rng);
-    car.axis = point.axis;
-    car.avenue = point.avenue !== undefined ? point.avenue : point.axis === 'x' ? point.z : point.x;
-    car.lane = point.lane !== undefined ? point.lane : city.laneFor(point.axis, point.heading);
-    car.laneTarget = car.lane;
-    car.heading = point.heading;
-    car.targetHeading = point.heading;
-    car.along = point.axis === 'x' ? point.x : point.z;
-    car.turning = 0;
-    car.turnCooldown = randRange(rng, 1, 4);
-    car.targetSpeed = randRange(rng, TRAFFIC.speedMin, TRAFFIC.speedMax);
-    car.speed = car.targetSpeed * randRange(rng, 0.7, 1);
-    car.group.position.set(point.x, 0, point.z);
-    car.group.rotation.y = point.heading;
+export function updateTraffic(traffic, dt, rng) {
+  for (const car of traffic.cars) {
+    // pause briefly at intersections sometimes, like a real driver
+    const nearCross = Math.abs(car.x - nearestRoadCoord(car.x)) < 4 && Math.abs(car.z - nearestRoadCoord(car.z)) < 4;
+    if (car.wait > 0) {
+      car.wait -= dt;
+    } else if (nearCross && rng() < 0.004) {
+      car.wait = range(rng, 1, 2.5);
+    }
+    const speed = car.wait > 0 ? 0 : car.cruise;
+    car.speed += (speed - car.speed) * Math.min(1, dt * 2);
+    const dx = Math.sin(car.heading) * car.speed * dt;
+    const dz = Math.cos(car.heading) * car.speed * dt;
+    car.x += dx;
+    car.z += dz;
+    // reached the city edge: turn around at the next intersection
+    if (Math.abs(car.x) > 285 || Math.abs(car.z) > 285) {
+      car.heading += Math.PI;
+      car.x = THREE.MathUtils.clamp(car.x, -285, 285);
+      car.z = THREE.MathUtils.clamp(car.z, -285, 285);
+    }
+    // at an intersection, sometimes turn onto the crossing road
+    if (nearCross && rng() < 0.02) {
+      const turn = rng() < 0.5 ? Math.PI / 2 : -Math.PI / 2;
+      car.heading += turn;
+      car.horizontal = Math.abs(Math.sin(car.heading)) > 0.5;
+      car.line = car.horizontal ? nearestRoadCoord(car.z) : nearestRoadCoord(car.x);
+      car.x = car.horizontal ? car.x : car.line + (car.heading > 0 ? 3 : -3);
+      car.z = car.horizontal ? car.line + (car.heading > 0 ? -3 : 3) : car.z;
+    }
+    car.mesh.position.set(car.x, 0, car.z);
+    car.mesh.rotation.y = car.heading;
+    for (const w of car.wheels) w.rotation.x += (car.speed * dt) / 0.42;
   }
+}
 
-  function newCar(spot) {
-    const kind = randPick(rng, KINDS);
-    const color = randomCarColor(rng);
-    const group = makeCar(color, kind);
-    scene.add(group);
-    const car = { group, kind, color, heading: 0, speed: 0, targetSpeed: 10, axis: 'x', lane: 0 };
-    placeOnRoad(car, spot);
-    cars.push(car);
-    return car;
-  }
-
-  for (let i = 0; i < TRAFFIC.count; i += 1) newCar();
-
-  /** Add one more traffic car on a road point (used when a car gets stolen). */
-  function spawnTrafficCar(spot) {
-    return newCar(spot);
-  }
-
-  function reset() {
-    for (const car of cars) placeOnRoad(car);
-  }
-
-  function update(dt, G) {
-    for (const car of cars) {
-      if (car.stolen) continue;
-      car.turnCooldown -= dt;
-
-      // Slow down for a car ahead on the same road, same lane direction.
-      let wanted = car.targetSpeed;
-      for (const other of cars) {
-        if (other === car || other.stolen || other.axis !== car.axis) continue;
-        const perp = car.axis === 'x'
-          ? Math.abs((other.avenue + other.lane) - (car.avenue + car.lane))
-          : Math.abs((other.avenue + other.lane) - (car.avenue + car.lane));
-        if (perp > 4) continue;
-        const gap = (other.along - car.along) * (car.axis === 'x' ? Math.sin(car.heading) : Math.cos(car.heading));
-        if (gap > 0 && gap < TRAFFIC.followGap) {
-          wanted = gap < 4 ? 0 : Math.min(wanted, Math.max(0, other.speed - 1));
-        }
-      }
-      car.speed += (wanted - car.speed) * Math.min(1, dt * 2.5);
-      if (car.speed < 0.05 && wanted === 0) car.speed = 0;
-
-      // At an intersection, sometimes turn onto the crossing avenue.
-      const avenueAts = city.avenues.filter((a) => a.axis === 'z').map((a) => a.at);
-      let nearCrossing = null;
-      for (const at of avenueAts) {
-        if (Math.abs(car.along - at) < 2.5) { nearCrossing = at; break; }
-      }
-      if (nearCrossing !== null && car.turnCooldown <= 0 && car.turning <= 0 && rng() < TRAFFIC.turnChance) {
-        const turnLeft = rng() < 0.5;
-        let newHeading;
-        if (car.axis === 'x') {
-          newHeading = car.heading > 0 ? (turnLeft ? 0 : Math.PI) : (turnLeft ? Math.PI : 0);
-        } else {
-          newHeading = car.heading === 0 ? (turnLeft ? Math.PI / 2 : -Math.PI / 2) : (turnLeft ? -Math.PI / 2 : Math.PI / 2);
-        }
-        const newAxis = car.axis === 'x' ? 'z' : 'x';
-        car.axis = newAxis;
-        car.avenue = nearCrossing;
-        car.along = car.axis === 'x'
-          ? car.group.position.x
-          : car.group.position.z;
-        // Ease from the road centre into the new lane instead of snapping.
-        car.lane = 0;
-        car.laneTarget = city.laneFor(newAxis, newHeading);
-        car.targetHeading = newHeading;
-        car.turning = TURN_TIME;
-        car.turnCooldown = randRange(rng, 4, 9);
-      }
-
-      // Heading eases toward its target while turning; lane eases likewise.
-      if (car.turning > 0) {
-        car.heading = turnHeadingToward(car.heading, car.targetHeading, 2.6, dt);
-        car.turning -= dt;
-      }
-      car.lane += (car.laneTarget - car.lane) * Math.min(1, dt * 2);
-
-      // Drive along the road; wrap around at the city edge.
-      const dir = car.axis === 'x' ? Math.sin(car.targetHeading) : Math.cos(car.targetHeading);
-      car.along += dir * car.speed * dt;
-      if (car.along > 262) car.along = -262;
-      if (car.along < -262) car.along = 262;
-
-      if (car.axis === 'x') car.group.position.set(car.along, 0, car.avenue + car.lane);
-      else car.group.position.set(car.avenue + car.lane, 0, car.along);
-      car.group.rotation.y = car.heading;
+// The traffic car nearest to (x,z), for collisions and stealing.
+export function nearestTrafficCar(traffic, x, z, maxDist = 5) {
+  let best = null;
+  let bestD = maxDist;
+  for (const car of traffic.cars) {
+    const d = Math.hypot(car.x - x, car.z - z);
+    if (d < bestD) {
+      bestD = d;
+      best = car;
     }
   }
+  return best;
+}
 
-  return { cars, update, reset, spawnTrafficCar };
+export function removeTrafficCar(scene, traffic, car) {
+  scene.remove(car.mesh);
+  traffic.cars.splice(traffic.cars.indexOf(car), 1);
 }

@@ -1,58 +1,61 @@
-// Save / load for Solmar Bay: one small JSON blob in localStorage.
-// Everything here is wrapped in try/catch on purpose — a browser that
-// blocks storage (private mode, disabled cookies) must never break the game.
+// SOLMAR BAY — save: progress in localStorage, nothing else.
+// One job: write and read the player's money, mission and position.
 
-const SAVE_KEY = 'solmar-bay.save.v1';
+const KEY = 'solmarbay-save-v1';
 
-/** Persist the parts of a run worth keeping between visits. */
-export function saveGame(G) {
+export function createSave() {
+  return { key: KEY };
+}
+
+export function saveGame(save, world) {
   try {
+    const { player, missions } = world;
     const data = {
-      money: G.player?.money ?? 0,
-      missionCurrent: G.missions?.current ?? 0,
-      missionStage: G.missions?.stage ?? 0,
-      health: G.player?.health ?? 100,
-      ammo: G.player?.ammo ?? 0,
-      gameMinutes: G.gameMinutes ?? 16 * 60 + 20,
+      money: player.money,
+      health: player.health,
+      ammo: player.ammo,
+      mission: missions.current,
+      x: player.inCar ? player.inCar.x : player.x,
+      z: player.inCar ? player.inCar.z : player.z,
+      heading: player.inCar ? player.inCar.heading : player.heading,
+      gameMinutes: world.gameMinutes,
+      savedAt: new Date().toISOString(),
     };
-    window.localStorage.setItem(SAVE_KEY, JSON.stringify(data));
+    localStorage.setItem(save.key, JSON.stringify(data));
     return true;
   } catch {
     return false;
   }
 }
 
-/** Read the saved run back, or null when there is none / it is unreadable. */
-export function loadGame() {
+export function loadGame(save) {
   try {
-    const raw = window.localStorage.getItem(SAVE_KEY);
+    const raw = localStorage.getItem(save.key);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (!data || typeof data !== 'object') return null;
-    return {
-      money: Number(data.money) || 0,
-      missionCurrent: Number(data.missionCurrent) || 0,
-      missionStage: Number(data.missionStage) || 0,
-      health: Number(data.health) || 100,
-      ammo: Number(data.ammo) || 0,
-      gameMinutes: Number(data.gameMinutes) || 16 * 60 + 20,
-    };
+    if (typeof data.money !== 'number' || typeof data.mission !== 'number') return null;
+    return data;
   } catch {
     return null;
   }
 }
 
-/** True when a save exists and parses. */
-export function hasSave() {
-  return loadGame() !== null;
+export function hasSave(save) {
+  return loadGame(save) !== null;
 }
 
-/** Wipe the save (used when the player starts a brand-new story). */
-export function clearSave() {
-  try {
-    window.localStorage.removeItem(SAVE_KEY);
-    return true;
-  } catch {
-    return false;
-  }
+export function applySave(world, data) {
+  const { player, missions } = world;
+  player.money = data.money;
+  player.health = data.health ?? 100;
+  player.ammo = data.ammo ?? 24;
+  player.x = data.x ?? -60;
+  player.z = data.z ?? 120;
+  player.heading = data.heading ?? Math.PI;
+  player.mesh.position.set(player.x, 0, player.z);
+  player.mesh.rotation.y = player.heading;
+  world.gameMinutes = data.gameMinutes ?? 16 * 60 + 20;
+  missions.current = Math.min(data.mission, 2);
+  missions.stage = 0;
+  missions.done = false;
 }

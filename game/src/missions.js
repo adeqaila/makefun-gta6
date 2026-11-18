@@ -1,282 +1,132 @@
-// The story of Solmar Bay: Rico Vale owes Marisol Kane, and three chained
-// jobs pay the debt off. Missions own the objective text, the 3D beacon
-// over the current target, and the payout + save when a job lands.
+// SOLMAR BAY — the story: three chained missions for Marisol Kane.
+// One job: objectives, beacons, rewards and the mission flow.
 
-import { saveGame } from './save.js';
+import THREE from './three.js';
+import { MISSIONS } from './config.js';
+import { spawnEnemy } from './combat.js';
+import { clearWanted } from './police.js';
 
-const REWARDS = [400, 600, 1000];
-const TITLES = ['The Debt', 'Hot Wheels', 'Bayfront Heat'];
-const BRIEFINGS = [
-  'Marisol Kane owns your debt. Pick up her package at the docks and deliver it to her club.',
-  'Marisol wants the Solmar GT. Steal the sports car and bring it to the garage.',
-  'The Bayfront job went loud. Lose the heat and reach the safehouse.',
-];
-const OBJECTIVES = [
-  ['Pick up the package at the docks', 'Deliver to Marisol\'s club'],
-  ['Steal the Solmar GT sports car', 'Bring the Solmar GT to the garage'],
-  ['The heat is on — survive!', 'Lose the heat — reach the safehouse'],
-];
-const STAGE_COUNT = [2, 2, 2];
-const PICKUP_RADIUS = 6;
-const SAFEHOUSE_RADIUS = 8;
-/** Seconds the "heat is on" stage lasts before the run-to-safety stage. */
-const HEAT_STAGE_SECONDS = 2.5;
-
-export function createMissions(G) {
-  const missions = {
-    current: 0,
-    stage: 0,
-    update,
-    objectiveText,
-    markerPos,
-    startMission,
-    reset,
-    isComplete,
+export function createMissions(scene) {
+  // a glowing beacon pillar + floating diamond marks the objective
+  const beaconMat = new THREE.MeshBasicMaterial({
+    color: 0xffc93a, transparent: true, opacity: 0.28, depthWrite: false,
+  });
+  const beacon = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 60, 16, 1, true), beaconMat);
+  beacon.position.y = 30;
+  beacon.visible = false;
+  scene.add(beacon);
+  const diamond = new THREE.Mesh(
+    new THREE.OctahedronGeometry(1.1),
+    new THREE.MeshBasicMaterial({ color: 0xffc93a }),
+  );
+  diamond.position.y = 8;
+  diamond.visible = false;
+  scene.add(diamond);
+  return {
+    current: 0,        // index into MISSIONS, 3 = story done
+    stage: 0,          // 0 = go to target, 1 = (M3) rivals cleared, go to safehouse
+    beacon,
+    diamond,
+    done: false,
+    rivalsSpawned: false,
   };
+}
 
-  let stageTimer = 0;
-  let heatSetupDone = false;
-  let finished = false;
-  let clock = 0;
-  let beacon = null;
-  let beaconDiamond = null;
+export function missionTarget(missions) {
+  if (missions.current >= MISSIONS.length) return null;
+  return MISSIONS[missions.current].target;
+}
 
-  buildBeacon();
+export function currentObjective(missions) {
+  if (missions.current >= MISSIONS.length) return 'Story complete — Solmar Bay is yours. Free roam!';
+  const m = MISSIONS[missions.current];
+  if (missions.current === 2 && missions.stage === 1) return 'Lose the heat — reach the Safehouse';
+  return m.objective;
+}
 
-  /** A tall see-through yellow column plus a floating spinning diamond. */
-  function buildBeacon() {
-    try {
-      const THREE = globalThis.THREE;
-      if (!THREE || !G.scene) return;
-      beacon = new THREE.Group();
-      const columnGeo = new THREE.CylinderGeometry(2.4, 2.4, 34, 20, 1, true);
-      const columnMat = new THREE.MeshBasicMaterial({
-        color: 0xffd23f,
-        transparent: true,
-        opacity: 0.16,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      });
-      const column = new THREE.Mesh(columnGeo, columnMat);
-      column.position.y = 17;
-      beacon.add(column);
-      const diamondGeo = new THREE.OctahedronGeometry(1.3);
-      const diamondMat = new THREE.MeshBasicMaterial({ color: 0xffd23f });
-      beaconDiamond = new THREE.Mesh(diamondGeo, diamondMat);
-      beaconDiamond.position.y = 7;
-      beacon.add(beaconDiamond);
-      beacon.visible = false;
-      G.scene.add(beacon);
-    } catch {
-      beacon = null;
-      beaconDiamond = null;
+function moveBeacon(missions, x, z) {
+  missions.beacon.position.x = x;
+  missions.beacon.position.z = z;
+  missions.beacon.visible = true;
+  missions.diamond.position.x = x;
+  missions.diamond.position.z = z;
+  missions.diamond.visible = true;
+}
+
+export function startMission(world, index) {
+  const { missions, hud, audio } = world;
+  missions.current = index;
+  missions.stage = 0;
+  missions.rivalsSpawned = false;
+  const m = MISSIONS[index];
+  const t = missionTarget(missions);
+  moveBeacon(missions, t.x, t.z);
+  if (hud) {
+    hud.banner(`${m.id} — ${m.title}`);
+    hud.message(m.brief);
+  }
+  if (audio) audio.fanfare();
+}
+
+export function completeMission(world) {
+  const { missions, player, hud, audio, save } = world;
+  const m = MISSIONS[missions.current];
+  player.money += m.reward;
+  if (hud) {
+    hud.banner(`Mission complete — +$${m.reward}`);
+    hud.toast(`${m.id} ${m.title} done`);
+  }
+  if (audio) audio.fanfare();
+  if (save) save.saveGame(world);
+  missions.current += 1;
+  missions.stage = 0;
+  if (missions.current >= MISSIONS.length) {
+    missions.done = true;
+    missions.beacon.visible = false;
+    missions.diamond.visible = false;
+    if (hud) hud.message('All three jobs done. Marisol Kane is paid — Solmar Bay is yours.');
+    return;
+  }
+  startMission(world, missions.current);
+}
+
+export function updateMissions(world, dt) {
+  const { missions, player, combat, scene, rng, police } = world;
+  if (missions.done) return;
+  missions.diamond.rotation.y += dt * 2;
+  missions.diamond.position.y = 8 + Math.sin(world.time * 2) * 0.6;
+  const px = player.inCar ? player.inCar.x : player.x;
+  const pz = player.inCar ? player.inCar.z : player.z;
+  const target = missionTarget(missions);
+  if (!target) return;
+
+  // M3: rivals guard the club; spawn them once Rico gets close
+  if (missions.current === 2 && missions.stage === 0 && !missions.rivalsSpawned) {
+    const d = Math.hypot(px - target.x, pz - target.z);
+    if (d < 40) {
+      missions.rivalsSpawned = true;
+      spawnEnemy(combat, scene, rng, target.x + 8, target.z + 6);
+      spawnEnemy(combat, scene, rng, target.x - 8, target.z - 4);
+      if (world.hud) world.hud.message('Rivals! Deal with them — then get to the Safehouse.');
+      if (world.audio) world.audio.alarm();
     }
   }
-
-  /** Plain {x, z} for a target that may be a Vector3 or a plain point. */
-  function pointOf(target) {
-    if (!target) return null;
-    if (typeof target.x === 'number' && typeof target.z === 'number') return { x: target.x, z: target.z };
-    if (target.position && typeof target.position.x === 'number') return { x: target.position.x, z: target.position.z };
-    return null;
+  // M3 stage 0 completes when the rivals are gone
+  if (missions.current === 2 && missions.stage === 0 && missions.rivalsSpawned && combat.enemies.length === 0) {
+    missions.stage = 1;
+    const safe = MISSIONS[2].target;
+    moveBeacon(missions, safe.x, safe.z);
+    if (world.hud) world.hud.message('Rivals cleared — lose the heat at the Safehouse.');
   }
-
-  /** The sports car Marisol wants, wherever it has been driven to. */
-  function sportCar() {
-    const lists = [G.vehicles?.drivable, G.vehicles?.cars, G.traffic?.cars];
-    for (const list of lists) {
-      if (!Array.isArray(list)) continue;
-      for (const car of list) {
-        if (car && car.isMissionSport) return car;
-      }
-    }
-    return null;
-  }
-
-  function playerPoint() {
-    return G.player?.pos ? { x: G.player.pos.x, z: G.player.pos.z } : null;
-  }
-
-  function distanceTo(point) {
-    const p = playerPoint();
-    if (!p || !point) return Infinity;
-    const dx = p.x - point.x;
-    const dz = p.z - point.z;
-    return Math.sqrt(dx * dx + dz * dz);
-  }
-
-  /** The target of the active stage, as {x, z}, or null when there is none. */
-  function targetPoint() {
-    if (finished || missions.current >= 3) return null;
-    if (missions.current === 0) {
-      return missions.stage === 0 ? pointOf(G.city?.packagePickup) : pointOf(G.city?.club);
-    }
-    if (missions.current === 1) {
-      if (missions.stage === 0) {
-        const car = sportCar();
-        return car?.group?.position ? pointOf(car.group.position) : null;
-      }
-      return pointOf(G.city?.garage);
-    }
-    // Mission 3: stage 0 has no place to go yet; stage 1 runs for the safehouse.
-    if (missions.stage === 0) return null;
-    return pointOf(G.city?.safehouse);
-  }
-
-  function objectiveText() {
-    if (finished || missions.current >= 3) return 'Story complete — Solmar Bay is yours';
-    const i = missions.current;
-    return `M${i + 1} — ${TITLES[i]}: ${OBJECTIVES[i][missions.stage]}`;
-  }
-
-  function markerPos() {
-    const target = targetPoint();
-    if (!target) return null;
-    try {
-      const THREE = globalThis.THREE;
-      if (THREE?.Vector3) return new THREE.Vector3(target.x, 0, target.z);
-    } catch {
-      // Fall through to the plain point below.
-    }
-    return { x: target.x, y: 0, z: target.z };
-  }
-
-  /** Stage 0 of the last job: wanted level 3 and two gunmen on Rico. */
-  function runHeatSetup() {
-    if (heatSetupDone) return;
-    heatSetupDone = true;
-    try {
-      G.police?.addWanted?.(3, G);
-    } catch {
-      // Police may not be ready yet; the wanted level is set again on retry.
-      heatSetupDone = false;
-    }
-    const p = playerPoint();
-    if (p) {
-      for (const [dx, dz] of [[10, 6], [-8, 10]]) {
-        try {
-          G.combat?.spawnEnemy?.({ x: p.x + dx, y: 0, z: p.z + dz }, G);
-        } catch {
-          // One missing gunman must not stop the mission.
-        }
-      }
-    }
-  }
-
-  function startMission(i) {
-    if (i >= 3) {
-      finished = true;
-      missions.current = 3;
-      missions.stage = 0;
-      G.banner = 'STORY COMPLETE — Solmar Bay is yours';
-      G.bannerTimer = 6;
-      if (beacon) beacon.visible = false;
-      return;
-    }
-    missions.current = i;
-    missions.stage = 0;
-    stageTimer = 0;
-    heatSetupDone = false;
-    finished = false;
-    G.banner = `MISSION ${i + 1} — ${TITLES[i]}`;
-    G.bannerTimer = 4;
-    G.message = BRIEFINGS[i];
-    G.messageTimer = 5;
-    if (i === 2) runHeatSetup();
-  }
-
-  function advanceStage() {
-    missions.stage += 1;
-    stageTimer = 0;
-    if (missions.stage >= STAGE_COUNT[missions.current]) {
-      completeMission();
-      return;
-    }
+  // reaching the beacon completes the current leg
+  const d = Math.hypot(px - target.x, pz - target.z);
+  const needClear = missions.current === 2 && missions.stage === 0;
+  if (d < 5 && !needClear) {
     if (missions.current === 2 && missions.stage === 1) {
-      G.message = 'Lose the heat — reach the safehouse';
-      G.messageTimer = 4;
-    }
-    if (missions.current === 1 && missions.stage === 1) {
-      G.message = 'Solmar GT secured — take it to the garage';
-      G.messageTimer = 4;
-    }
-    if (missions.current === 0 && missions.stage === 1) {
-      G.message = 'Package secured — deliver it to the club';
-      G.messageTimer = 4;
+      clearWanted(police, world);
+      completeMission(world);
+    } else if (missions.current !== 2) {
+      completeMission(world);
     }
   }
-
-  function completeMission() {
-    const reward = REWARDS[missions.current];
-    if (G.player) G.player.money = (G.player.money || 0) + reward;
-    G.banner = `MISSION COMPLETE — $${reward}`;
-    G.bannerTimer = 4;
-    try {
-      G.audio?.missionDone?.();
-    } catch {
-      // Sound is optional.
-    }
-    // Advance first, then save: the save must describe the NEXT job, not
-    // the one just finished (its stage count would reload as "undefined").
-    const next = missions.current + 1;
-    startMission(next);
-    try {
-      saveGame(G);
-    } catch {
-      // A failed save must not block the next mission.
-    }
-  }
-
-  function update(dt, game) {
-    clock += dt;
-    if (finished) {
-      if (beacon) beacon.visible = false;
-      return;
-    }
-    stageTimer += dt;
-
-    // Keep the beacon glued to the live target (the sports car moves).
-    const target = targetPoint();
-    if (beacon) {
-      if (target) {
-        beacon.visible = true;
-        beacon.position.set(target.x, 0, target.z);
-        if (beaconDiamond) {
-          beaconDiamond.position.y = 7 + Math.sin(clock * 2) * 0.7;
-          beaconDiamond.rotation.y += dt * 1.6;
-        }
-      } else {
-        beacon.visible = false;
-      }
-    }
-
-    if (missions.current === 2 && missions.stage === 0) {
-      if (stageTimer >= HEAT_STAGE_SECONDS) advanceStage();
-      return;
-    }
-    if (missions.current === 1 && missions.stage === 0) {
-      const car = sportCar();
-      if (car && G.player?.inCar === car) {
-        advanceStage();
-      }
-      return;
-    }
-    const radius = missions.current === 2 && missions.stage === 1 ? SAFEHOUSE_RADIUS : PICKUP_RADIUS;
-    if (distanceTo(target) < radius) advanceStage();
-  }
-
-  function reset() {
-    missions.current = 0;
-    missions.stage = 0;
-    stageTimer = 0;
-    heatSetupDone = false;
-    finished = false;
-    if (beacon) beacon.visible = false;
-  }
-
-  function isComplete() {
-    return finished;
-  }
-
-  return missions;
 }

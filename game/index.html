@@ -1,22 +1,96 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SOLMAR BAY — Open World</title>
-<link rel="icon" href="data:,">
+<title>SOLMAR BAY — an open-world story in the sun</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1208; }
-  #app { position: fixed; inset: 0; }
-  #app canvas { display: block; touch-action: none; }
-  /* Read aloud, never shown: the status line screen readers announce. */
-  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a2230; font-family: 'Segoe UI', Arial, sans-serif; }
+  #game-canvas { position: fixed; inset: 0; }
+  #game-canvas canvas { display: block; }
+  .panel { background: rgba(12, 18, 26, 0.72); border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 8px; color: #fff; }
+  #hud { position: fixed; inset: 0; pointer-events: none; display: none; z-index: 5; }
+  #hud-topleft { position: absolute; top: 14px; left: 14px; padding: 10px 14px; min-width: 210px; }
+  #hud-money { font-size: 26px; font-weight: 800; color: #7be495; letter-spacing: 0.5px; }
+  #hud-health { margin-top: 6px; height: 10px; background: rgba(255,255,255,0.22); border-radius: 5px; overflow: hidden; }
+  #hud-health-fill { height: 100%; width: 100%; background: #58c96b; border-radius: 5px; }
+  #hud-ammo { margin-top: 6px; font-size: 14px; color: #ffd9a0; font-weight: 600; }
+  #hud-topcenter { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); text-align: center; padding: 8px 18px; }
+  #hud-stars { font-size: 24px; letter-spacing: 3px; }
+  #hud-clock { font-size: 15px; color: #cfe3ff; margin-top: 2px; font-weight: 600; }
+  #hud-topright { position: absolute; top: 14px; right: 14px; padding: 6px; }
+  #minimap { display: block; width: 180px; height: 180px; border-radius: 6px; }
+  #hud-objective { position: absolute; bottom: 18px; left: 50%; transform: translateX(-50%); padding: 10px 20px; font-size: 16px; font-weight: 600; white-space: nowrap; max-width: 90vw; overflow: hidden; text-overflow: ellipsis; }
+  #hud-banner { position: absolute; top: 26%; left: 50%; transform: translateX(-50%); font-size: 40px; font-weight: 900; color: #ffc93a; text-shadow: 0 2px 0 rgba(0,0,0,0.6), 0 0 24px rgba(0,0,0,0.5); opacity: 0; transition: opacity 0.4s; text-align: center; white-space: nowrap; }
+  #hud-message { position: absolute; top: 34%; left: 50%; transform: translateX(-50%); font-size: 17px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8); opacity: 0; transition: opacity 0.4s; text-align: center; max-width: 640px; }
+  #hud-toast { position: absolute; bottom: 84px; left: 50%; transform: translateX(-50%); padding: 7px 16px; font-size: 14px; color: #ffe9a8; opacity: 0; transition: opacity 0.4s; white-space: nowrap; }
+  #hud-speed { position: absolute; bottom: 18px; right: 18px; padding: 10px 16px; font-size: 26px; font-weight: 800; color: #fff; display: none; }
+  .overlay { position: fixed; inset: 0; z-index: 10; display: none; align-items: center; justify-content: center; background: linear-gradient(180deg, rgba(10,16,26,0.55), rgba(10,16,26,0.82)); color: #fff; }
+  .overlay-inner { text-align: center; max-width: 640px; padding: 32px; }
+  .game-title { font-size: 76px; font-weight: 900; letter-spacing: 6px; color: #ffc93a; text-shadow: 0 4px 0 #b3541e, 0 8px 28px rgba(0,0,0,0.7); line-height: 1; }
+  .game-subtitle { font-size: 20px; color: #ffd9a0; margin-top: 8px; letter-spacing: 2px; }
+  .game-story { font-size: 16px; line-height: 1.55; color: #e8eef5; margin: 22px 0 8px; }
+  .game-controls { font-size: 13px; color: #b9c6d4; margin: 14px 0 26px; line-height: 1.7; }
+  .btn { pointer-events: auto; cursor: pointer; display: inline-block; margin: 6px; padding: 13px 30px; font-size: 17px; font-weight: 700; color: #1a2230; background: #ffc93a; border: none; border-radius: 8px; }
+  .btn:hover { background: #ffd964; }
+  .btn.secondary { background: rgba(255,255,255,0.16); color: #fff; border: 1px solid rgba(255,255,255,0.4); }
+  .btn:disabled { opacity: 0.45; cursor: default; }
+  #start-screen { display: flex; }
+  .big-word { font-size: 64px; font-weight: 900; letter-spacing: 8px; color: #ff5f4d; text-shadow: 0 4px 0 rgba(0,0,0,0.5); }
+  .over-stats { font-size: 16px; color: #cfe3ff; margin-top: 14px; }
 </style>
 </head>
 <body>
-<div id="app" aria-label="Solmar Bay: an open-world story. Explore the city on foot or by car, complete missions for Marisol Kane, and stay ahead of the police."></div>
-<p id="status" role="status" aria-live="polite"></p>
-<script src="./vendor/three.min.js"></script>
+<div id="game-canvas"></div>
+
+<div id="hud">
+  <div id="hud-topleft" class="panel">
+    <div id="hud-money">$250</div>
+    <div id="hud-health"><div id="hud-health-fill"></div></div>
+    <div id="hud-ammo">Ammo 24</div>
+  </div>
+  <div id="hud-topcenter" class="panel">
+    <div id="hud-stars">☆☆☆☆☆</div>
+    <div id="hud-clock">16:20</div>
+  </div>
+  <div id="hud-topright" class="panel"><canvas id="minimap" width="180" height="180"></canvas></div>
+  <div id="hud-banner"></div>
+  <div id="hud-message"></div>
+  <div id="hud-toast" class="panel"></div>
+  <div id="hud-objective" class="panel">Pick up the package at Rico&rsquo;s Garage</div>
+  <div id="hud-speed" class="panel">0 mph</div>
+</div>
+
+<div id="start-screen" class="overlay">
+  <div class="overlay-inner">
+    <div class="game-title">SOLMAR BAY</div>
+    <div class="game-subtitle">AN OPEN-WORLD STORY IN THE SUN</div>
+    <p class="game-story" id="start-story"></p>
+    <p class="game-controls" id="start-controls"></p>
+    <button class="btn" id="btn-new">New Game</button>
+    <button class="btn secondary" id="btn-continue">Continue</button>
+  </div>
+</div>
+
+<div id="pause-screen" class="overlay">
+  <div class="overlay-inner">
+    <div class="game-title" style="font-size:52px">PAUSED</div>
+    <p class="game-story">Solmar Bay waits for no one — except right now.</p>
+    <button class="btn" id="btn-resume">Resume</button>
+    <button class="btn secondary" id="btn-quit-title">Quit to Title</button>
+  </div>
+</div>
+
+<div id="over-screen" class="overlay">
+  <div class="overlay-inner">
+    <div class="big-word" id="over-title">WASTED</div>
+    <p class="game-story" id="over-text"></p>
+    <p class="over-stats" id="over-stats"></p>
+    <button class="btn" id="btn-restart">Try Again</button>
+  </div>
+</div>
+
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

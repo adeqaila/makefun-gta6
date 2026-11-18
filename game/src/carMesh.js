@@ -1,104 +1,117 @@
-// Car meshes for Solmar Bay: one small builder for every kind of car in the
-// city. A car is a low-poly group — body box, cabin box, four cylinder
-// wheels, small emissive light boxes — so a street full of them stays cheap
-// for the headless renderer. Cars face +Z when their heading is 0.
+// SOLMAR BAY — car meshes: player, traffic and police bodies.
+// One job: turn a colour and a kind into a drivable-looking car group.
 
-import { PALETTE } from './config.js';
+import THREE from './three.js';
 
-const WHEEL_R = 0.35;
+const bodyGeo = new THREE.BoxGeometry(1, 1, 1);
+const wheelGeo = new THREE.CylinderGeometry(0.42, 0.42, 0.35, 10);
 
-/** Dimensions per kind: sport sits lower and stretches longer than a sedan. */
-const DIMS = {
-  sedan: { length: 4.2, width: 1.9, bodyH: 0.72, bodyY: 0.55, cabinL: 2.1, cabinH: 0.6 },
-  sport: { length: 4.7, width: 2.0, bodyH: 0.55, bodyY: 0.48, cabinL: 2.0, cabinH: 0.5 },
-  taxi: { length: 4.2, width: 1.9, bodyH: 0.72, bodyY: 0.55, cabinL: 2.1, cabinH: 0.6 },
-  truck: { length: 5.4, width: 2.1, bodyH: 0.8, bodyY: 0.6, cabinL: 1.4, cabinH: 0.7 },
-  police: { length: 4.3, width: 1.95, bodyH: 0.72, bodyY: 0.55, cabinL: 2.1, cabinH: 0.6 },
-};
-
-function box(w, h, d, color, x, y, z, emissive) {
-  const mat = new THREE.MeshLambertMaterial({ color });
-  if (emissive) mat.emissive = new THREE.Color(emissive);
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-  mesh.position.set(x, y, z);
-  return mesh;
-}
-
-/**
- * Build one car. `color` is a hex string; `kind` is sedan, sport, taxi,
- * truck or police. Returns a THREE.Group whose userData holds length/width.
- */
-export function buildCarMesh(color, kind) {
-  const dims = DIMS[kind] || DIMS.sedan;
+export function buildCarMesh(color, kind = 'sedan') {
   const group = new THREE.Group();
-  let strobeMats = null;
-  const halfL = dims.length / 2;
-  const halfW = dims.width / 2;
+  group.name = `car-${kind}`;
+  const paint = new THREE.MeshLambertMaterial({ color });
+  const glass = new THREE.MeshLambertMaterial({ color: 0x1c2836, emissive: 0x0a1420 });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x14161a });
 
-  const paint = kind === 'police' ? '#f0f0f0' : color;
-  const body = box(dims.width, dims.bodyH, dims.length, paint, 0, dims.bodyY, 0);
+  const long = kind === 'sport' ? 4.6 : 4.2;
+  const wide = 1.9;
+  const body = new THREE.Mesh(bodyGeo, paint);
+  body.scale.set(wide, 0.75, long);
+  body.position.y = 0.62;
+  body.castShadow = true;
   group.add(body);
 
-  if (kind === 'truck') {
-    // A cab up front and an open bed behind it instead of a full cabin.
-    const cab = box(dims.width - 0.15, dims.cabinH, dims.cabinL, paint, 0, dims.bodyY + dims.bodyH / 2 + dims.cabinH / 2 - 0.08, halfL - dims.cabinL / 2 - 0.15);
-    group.add(cab);
-    const bedWall = 0.42;
-    const bed = box(dims.width - 0.1, bedWall, dims.length - dims.cabinL - 0.7, '#6b5a48', 0, dims.bodyY + dims.bodyH / 2 + bedWall / 2 - 0.05, -halfL + (dims.length - dims.cabinL - 0.7) / 2 + 0.25);
-    group.add(bed);
-  } else {
-    const cabin = box(dims.width - 0.25, dims.cabinH, dims.cabinL, '#22303c', 0, dims.bodyY + dims.bodyH / 2 + dims.cabinH / 2 - 0.05, -0.15);
-    group.add(cabin);
+  const cabin = new THREE.Mesh(bodyGeo, glass);
+  cabin.scale.set(wide * 0.82, 0.62, long * 0.45);
+  cabin.position.set(0, 1.28, kind === 'sport' ? -0.2 : -0.1);
+  cabin.castShadow = true;
+  group.add(cabin);
+
+  // headlights + taillights
+  const lightMat = new THREE.MeshLambertMaterial({ color: 0xfff2b0, emissive: 0x776622 });
+  const tailMat = new THREE.MeshLambertMaterial({ color: 0xc22a1e, emissive: 0x550a05 });
+  for (const sx of [-0.6, 0.6]) {
+    const head = new THREE.Mesh(bodyGeo, lightMat);
+    head.scale.set(0.45, 0.18, 0.1);
+    head.position.set(sx, 0.62, long / 2 + 0.02);
+    group.add(head);
+    const tail = new THREE.Mesh(bodyGeo, tailMat);
+    tail.scale.set(0.45, 0.18, 0.1);
+    tail.position.set(sx, 0.62, -long / 2 - 0.02);
+    group.add(tail);
   }
 
-  // Wheels: cylinders turned so their axle runs across the car (along X).
-  const wheelGeo = new THREE.CylinderGeometry(WHEEL_R, WHEEL_R, 0.26, 10);
-  const wheelMat = new THREE.MeshLambertMaterial({ color: '#1c1c20' });
-  const wheelZ = halfL * 0.68;
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 1]) {
-      const wheel = new THREE.Mesh(wheelGeo, wheelMat);
-      wheel.rotation.z = Math.PI / 2;
-      wheel.position.set(sx * (halfW - 0.08), WHEEL_R, sz * wheelZ);
-      group.add(wheel);
-    }
+  // wheels, spun by the driving code
+  const wheels = [];
+  const wheelMat = new THREE.MeshLambertMaterial({ color: 0x111214 });
+  for (const [wx, wz] of [[-0.85, 1.45], [0.85, 1.45], [-0.85, -1.45], [0.85, -1.45]]) {
+    const wheel = new THREE.Mesh(wheelGeo, wheelMat);
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(wx, 0.42, wz);
+    wheel.castShadow = true;
+    group.add(wheel);
+    wheels.push(wheel);
   }
 
-  // Headlights (warm white, front = +Z) and taillights (red, rear = -Z).
-  const lightW = 0.42;
-  const lightY = dims.bodyY + 0.08;
-  for (const sx of [-1, 1]) {
-    group.add(box(lightW, 0.16, 0.08, '#fff6d8', sx * (halfW - 0.32), lightY, halfL + 0.01, '#fff2b0'));
-    group.add(box(lightW, 0.16, 0.08, '#c02020', sx * (halfW - 0.32), lightY, -halfL - 0.01, '#ff2a2a'));
-  }
-
+  let strobes = null;
   if (kind === 'police') {
-    // Black-and-white doors are faked with a dark stripe; red/blue light bar on top.
-    group.add(box(dims.width + 0.02, 0.3, dims.length * 0.45, '#22242c', 0, dims.bodyY + 0.05, 0));
-    const barY = dims.bodyY + dims.bodyH + dims.cabinH - 0.02;
-    const redMat = new THREE.MeshLambertMaterial({ color: '#d02020', emissive: new THREE.Color('#ff2020') });
-    const blueMat = new THREE.MeshLambertMaterial({ color: '#2050d0', emissive: new THREE.Color('#2040ff') });
-    const redBar = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.16, 0.5), redMat);
-    redBar.position.set(-0.3, barY, -0.15);
-    const blueBar = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.16, 0.5), blueMat);
-    blueBar.position.set(0.3, barY, -0.15);
-    group.add(redBar, blueBar);
-    // Strobe materials, so police.js can flash the light bar while chasing.
-    strobeMats = { red: redMat, blue: blueMat };
+    const bar = new THREE.Mesh(bodyGeo, dark);
+    bar.scale.set(1.2, 0.22, 0.4);
+    bar.position.set(0, 1.72, -0.1);
+    group.add(bar);
+    const redMat = new THREE.MeshLambertMaterial({ color: 0xff2211, emissive: 0x880000 });
+    const blueMat = new THREE.MeshLambertMaterial({ color: 0x2266ff, emissive: 0x000088 });
+    const red = new THREE.Mesh(bodyGeo, redMat);
+    red.scale.set(0.55, 0.24, 0.42);
+    red.position.set(-0.3, 1.74, -0.1);
+    group.add(red);
+    const blue = new THREE.Mesh(bodyGeo, blueMat);
+    blue.scale.set(0.55, 0.24, 0.42);
+    blue.position.set(0.3, 1.74, -0.1);
+    group.add(blue);
+    strobes = { red: redMat, blue: blueMat, phase: 0 };
+    const stripe = new THREE.Mesh(bodyGeo, new THREE.MeshLambertMaterial({ color: 0xf2f2f2 }));
+    stripe.scale.set(wide + 0.02, 0.2, long * 0.5);
+    stripe.position.set(0, 0.75, 0);
+    group.add(stripe);
   }
 
-  if (kind === 'taxi') {
-    // Yellow roof sign.
-    const signY = dims.bodyY + dims.bodyH + dims.cabinH - 0.02;
-    group.add(box(0.7, 0.18, 0.4, '#f2c94c', 0, signY, -0.15, '#f2c94c'));
-  }
-
-  group.userData = { length: dims.length, width: dims.width, kind };
-  if (strobeMats) group.userData.strobeMats = strobeMats;
-  return group;
+  return { group, wheels, strobes, length: long, width: wide };
 }
 
-/** A random paint colour from the city palette. */
-export function randomCarColor(rng) {
-  return PALETTE.car[Math.floor(rng() * PALETTE.car.length)];
+// A simple on-foot character: body, head, legs that swing while walking.
+export function buildPersonMesh(shirtColor, skinColor = 0xc98d64) {
+  const group = new THREE.Group();
+  group.name = 'person';
+  const shirt = new THREE.MeshLambertMaterial({ color: shirtColor });
+  const skin = new THREE.MeshLambertMaterial({ color: skinColor });
+  const pants = new THREE.MeshLambertMaterial({ color: 0x2b3442 });
+
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.75, 0.34), shirt);
+  body.position.y = 1.12;
+  body.castShadow = true;
+  group.add(body);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), skin);
+  head.position.y = 1.72;
+  head.castShadow = true;
+  group.add(head);
+  const hair = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.14, 0.44), new THREE.MeshLambertMaterial({ color: 0x1d1712 }));
+  hair.position.y = 1.96;
+  group.add(hair);
+  const legs = [];
+  for (const sx of [-0.16, 0.16]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.72, 0.26), pants);
+    leg.position.set(sx, 0.36, 0);
+    leg.castShadow = true;
+    group.add(leg);
+    legs.push(leg);
+  }
+  const arms = [];
+  for (const sx of [-0.38, 0.38]) {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.62, 0.2), shirt);
+    arm.position.set(sx, 1.12, 0);
+    group.add(arm);
+    arms.push(arm);
+  }
+  return { group, legs, arms, head };
 }
