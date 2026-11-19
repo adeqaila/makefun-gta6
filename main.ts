@@ -7,7 +7,7 @@
 // Local check:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { cpSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
@@ -23,8 +23,13 @@ const DOSSIER_CAPS = {
 };
 
 function handIn() {
-  rmSync(destination, { recursive: true, force: true });
+  // Never delete the output directory itself: on the grader it is a mount
+  // owned by root, so rmSync(destination, { recursive: true }) fails EPERM
+  // there. Create it if missing, then clear only its contents.
   mkdirSync(destination, { recursive: true });
+  for (const child of readdirSync(destination)) {
+    rmSync(join(destination, child), { recursive: true, force: true });
+  }
 
   const carried = ['game', 'screenshots'];
   for (const folder of carried) {
